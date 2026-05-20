@@ -1,0 +1,11 @@
+akshare
+baostock
+pandas
+numpy
+requests
+fastapi
+uvicorn
+sqlalchemy
+jupyter
+matplotlib
+ta

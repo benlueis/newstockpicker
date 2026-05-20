@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+data/logs/
+.ipynb_checkpoints/
+*.egg-info/
+
+# 每日扫描结果不提交，由 CI 作为 artifact 留存
+data/breakout_*.csv
+data/dragon_leader_*.csv
+data/sideways_breakout_*.csv
