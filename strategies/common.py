@@ -1,7 +1,8 @@
-"""策略共用：行情拉取、交易日判断"""
+"""策略共用：行情拉取（缓存优先）、交易日判断"""
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -9,11 +10,19 @@ import baostock as bs
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX_CODE = "sh.000300"  # 沪深300，用于相对强度
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from cache_manager import load as _cache_load  # noqa: E402
+
+INDEX_CODE = "sh.000300"
 
 
 def get_stock_data(code: str, days: int = 300) -> pd.DataFrame:
-    """拉取单只股票前复权日 K"""
+    """优先从本地 parquet 缓存读取，缓存不存在时回退到在线拉取。"""
+    df = _cache_load(code, days=days)
+    if not df.empty:
+        return df
+
     end = datetime.today().strftime("%Y-%m-%d")
     start = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
 

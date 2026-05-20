@@ -10,3 +10,6 @@ data/logs/
 data/breakout_*.csv
 data/dragon_leader_*.csv
 data/sideways_breakout_*.csv
+
+# 本地 parquet 缓存
+data/cache/

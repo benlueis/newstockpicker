@@ -24,12 +24,22 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pyarrow
 
       - name: Set timezone to Shanghai
         run: |
           sudo timedatectl set-timezone Asia/Shanghai || true
           date
+
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: stock-cache-${{ runner.os }}
+          restore-keys: stock-cache-
+
+      - name: Update cache (incremental)
+        run: python scripts/update_cache.py
 
       - name: Refresh stock list (skip on failure)
         continue-on-error: true
