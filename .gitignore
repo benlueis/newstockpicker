@@ -13,3 +13,4 @@ data/sideways_breakout_*.csv
 
 # 本地 parquet 缓存
 data/cache/
+cmd.md

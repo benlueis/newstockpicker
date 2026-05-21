@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from notify import send  # noqa: E402
 
 DATA_DIR = ROOT / "data"
-TOP_N = 5
 
 STRATEGIES = [
     ("低位横盘突破", "breakout"),
@@ -64,11 +63,8 @@ def build_section(label: str, prefix: str, tag: str) -> str:
     elif "vol_ratio" in df.columns:
         df = df.sort_values("vol_ratio", ascending=False)
 
-    top = df.head(TOP_N)
     lines = [f"【{label}】共{len(df)}只"]
-    lines.extend(format_row(r) for _, r in top.iterrows())
-    if len(df) > TOP_N:
-        lines.append(f"...另 {len(df) - TOP_N} 只见 CSV")
+    lines.extend(format_row(r) for _, r in df.iterrows())
     return "\n".join(lines)
 
 
