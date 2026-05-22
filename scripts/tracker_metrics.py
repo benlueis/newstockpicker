@@ -1,9 +1,13 @@
 """选股回顾页面用的纯函数：可用日期、读 CSV、T+N 涨幅、桶胜率。"""
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+
+STRATEGY_PREFIXES = ("breakout", "dragon_leader", "sideways_breakout")
 
 
 def compute_returns(
@@ -55,3 +59,24 @@ def compute_bucket_winrate(df: pd.DataFrame, horizon: int) -> tuple[int, int]:
         return 0, 0
     wins = int((valid > 0).sum())
     return wins, int(len(valid))
+
+
+def list_signal_dates(data_dir: Path) -> list[str]:
+    """
+    扫描 data_dir 下的 {prefix}_{YYYYMMDD}.csv，返回三策略都存在的日期，
+    格式 'YYYY-MM-DD'，按降序排列（最新在前）。
+    """
+    pattern = re.compile(r"^(breakout|dragon_leader|sideways_breakout)_(\d{8})\.csv$")
+    by_strategy: dict[str, set[str]] = {p: set() for p in STRATEGY_PREFIXES}
+
+    for f in Path(data_dir).glob("*.csv"):
+        m = pattern.match(f.name)
+        if not m:
+            continue
+        prefix, tag = m.group(1), m.group(2)
+        iso = f"{tag[:4]}-{tag[4:6]}-{tag[6:8]}"
+        by_strategy[prefix].add(iso)
+
+    common = set.intersection(*by_strategy.values()) if all(by_strategy.values()) else set()
+    return sorted(common, reverse=True)
+

@@ -76,5 +76,33 @@ class TestBucketWinrate(unittest.TestCase):
         self.assertEqual((wins, total), (0, 0))
 
 
+class TestListSignalDates(unittest.TestCase):
+
+    def test_dates_intersect_three_strategies(self, ):
+        # 用 tmp_path 模式：手动建空 CSV 模拟 data 目录
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as td:
+            d = P(td)
+            (d / "breakout_20260518.csv").write_text("代码,名称\n")
+            (d / "breakout_20260519.csv").write_text("代码,名称\n")
+            (d / "dragon_leader_20260519.csv").write_text("代码,名称\n")
+            (d / "dragon_leader_20260520.csv").write_text("代码,名称\n")
+            (d / "sideways_breakout_20260519.csv").write_text("代码,名称\n")
+            (d / "sideways_breakout_20260520.csv").write_text("代码,名称\n")
+
+            from tracker_metrics import list_signal_dates
+            dates = list_signal_dates(d)
+            # 三策略都有的只有 20260519
+            self.assertEqual(dates, ["2026-05-19"])
+
+    def test_no_files_returns_empty(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as td:
+            from tracker_metrics import list_signal_dates
+            self.assertEqual(list_signal_dates(P(td)), [])
+
+
 if __name__ == "__main__":
     unittest.main()
