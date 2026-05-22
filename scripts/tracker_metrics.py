@@ -80,3 +80,41 @@ def list_signal_dates(data_dir: Path) -> list[str]:
     common = set.intersection(*by_strategy.values()) if all(by_strategy.values()) else set()
     return sorted(common, reverse=True)
 
+
+def _load_cache_bars(code: str) -> pd.DataFrame:
+    """从 parquet 缓存读取该股全历史 K（懒导入避免循环）。"""
+    from cache_manager import load
+    # load(code, days=N) 取尾部 N 条；这里要后向，先取较多再切
+    return load(code, days=600)
+
+
+_CSV_DATE_RE = re.compile(r"_(\d{8})\.csv$")
+
+
+def load_signal_csv_with_returns(
+    csv_path: Path,
+    horizons: Iterable[int] = (1, 3, 5),
+) -> pd.DataFrame:
+    """读 CSV，对每只股票补全 T+N 涨幅列，返回新 DataFrame。"""
+    csv_path = Path(csv_path)
+    df = pd.read_csv(csv_path)
+    if df.empty or "代码" not in df.columns:
+        return df
+
+    m = _CSV_DATE_RE.search(csv_path.name)
+    if not m:
+        return df
+    tag = m.group(1)
+    signal_date = pd.Timestamp(f"{tag[:4]}-{tag[4:6]}-{tag[6:8]}")
+
+    horizons = list(horizons)
+    cols = {h: [] for h in horizons}
+    for code in df["代码"].astype(str):
+        bars = _load_cache_bars(code)
+        rets = compute_returns(bars, signal_date, horizons=horizons)
+        for h in horizons:
+            cols[h].append(rets[h])
+    for h in horizons:
+        df[f"T+{h}"] = cols[h]
+    return df
+

@@ -104,5 +104,42 @@ class TestListSignalDates(unittest.TestCase):
             self.assertEqual(list_signal_dates(P(td)), [])
 
 
+class TestLoadSignalCsvWithReturns(unittest.TestCase):
+
+    def test_returns_appended(self):
+        # 用 monkey patch 替换 cache load
+        import tempfile
+        from pathlib import Path as P
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            d = P(td)
+            csv = d / "breakout_20260519.csv"
+            csv.write_text("代码,名称\nsh.600519,贵州茅台\n")
+
+            fake_bars = pd.DataFrame({
+                "date": pd.date_range("2026-05-19", periods=6, freq="B"),
+                "close": [100, 101, 102, 103, 104, 105],
+            })
+
+            with patch("tracker_metrics._load_cache_bars", return_value=fake_bars):
+                from tracker_metrics import load_signal_csv_with_returns
+                df = load_signal_csv_with_returns(csv)
+
+            self.assertEqual(len(df), 1)
+            self.assertAlmostEqual(df["T+1"].iloc[0], 1.0, places=2)
+            self.assertAlmostEqual(df["T+3"].iloc[0], 3.0, places=2)
+            self.assertAlmostEqual(df["T+5"].iloc[0], 5.0, places=2)
+
+    def test_empty_csv_returns_empty(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as td:
+            csv = P(td) / "breakout_20260519.csv"
+            csv.write_text("代码,名称\n")
+            from tracker_metrics import load_signal_csv_with_returns
+            df = load_signal_csv_with_returns(csv)
+            self.assertTrue(df.empty)
+
+
 if __name__ == "__main__":
     unittest.main()
