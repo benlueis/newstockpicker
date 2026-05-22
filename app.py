@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
@@ -48,6 +49,45 @@ def _format_pct(v):
     return f"{v:+.2f}%"
 
 
+def _render_kline(code: str, signal_date: str, days_before: int = 20, days_after: int = 20) -> None:
+    """渲染 plotly candlestick，标注信号日竖线。"""
+    from cache_manager import load
+    bars = load(code, days=600)
+    if bars.empty:
+        st.info(f"{code} 无缓存数据")
+        return
+
+    sig_ts = pd.Timestamp(signal_date)
+    df = bars.sort_values("date").reset_index(drop=True)
+    sig_idx = df.index[df["date"] == sig_ts]
+    if len(sig_idx) == 0:
+        st.info(f"{code} 信号日 {signal_date} 不在数据范围内")
+        return
+
+    s = max(0, int(sig_idx[0]) - days_before)
+    e = min(len(df), int(sig_idx[0]) + days_after + 1)
+    seg = df.iloc[s:e]
+
+    fig = go.Figure(data=[go.Candlestick(
+        x=seg["date"],
+        open=seg["open"],
+        high=seg["high"],
+        low=seg["low"],
+        close=seg["close"],
+        increasing_line_color="red",
+        decreasing_line_color="green",
+        name=code,
+    )])
+    fig.add_vline(x=sig_ts, line_color="blue", line_dash="dash",
+                  annotation_text="信号日", annotation_position="top")
+    fig.update_layout(
+        height=400, margin=dict(l=10, r=10, t=30, b=10),
+        xaxis_rangeslider_visible=False,
+        title=f"{code}  信号日 {signal_date}",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="选股回顾", layout="wide")
     st.title("选股回顾")
@@ -82,7 +122,25 @@ def main() -> None:
             for c in ("T+1", "T+3", "T+5"):
                 if c in show.columns:
                     show[c] = show[c].map(_format_pct)
-            st.dataframe(show, use_container_width=True, hide_index=True)
+
+            event = st.dataframe(
+                show,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"table_{prefix}",
+            )
+            sel_rows = event.selection.rows if event and event.selection else []
+            if sel_rows:
+                code = str(df["代码"].iloc[sel_rows[0]])
+                st.session_state["selected"] = (code, iso_date)
+
+    sel = st.session_state.get("selected")
+    if sel:
+        code, sig = sel
+        st.divider()
+        _render_kline(code, sig)
 
     st.caption(
         "T+N 数据来自 baostock 收盘后日 K，"
