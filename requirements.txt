@@ -10,3 +10,5 @@ jupyter
 matplotlib
 ta
 pyarrow
+streamlit
+plotly
