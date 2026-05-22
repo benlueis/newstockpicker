@@ -46,5 +46,35 @@ class TestComputeReturns(unittest.TestCase):
         self.assertIsNone(out[5])
 
 
+class TestBucketWinrate(unittest.TestCase):
+
+    def test_basic_winrate(self):
+        # 5 票，T+5 涨幅: 3 正 1 负 1 None → 3/4 = 75%
+        rows = [
+            {"代码": "a", "T+5": 1.5},
+            {"代码": "b", "T+5": -2.0},
+            {"代码": "c", "T+5": 0.1},
+            {"代码": "d", "T+5": 5.0},
+            {"代码": "e", "T+5": None},
+        ]
+        df = pd.DataFrame(rows)
+        from tracker_metrics import compute_bucket_winrate
+        wins, total = compute_bucket_winrate(df, horizon=5)
+        self.assertEqual(wins, 3)
+        self.assertEqual(total, 4)
+
+    def test_all_pending_returns_zero_total(self):
+        df = pd.DataFrame([{"代码": "a", "T+5": None}, {"代码": "b", "T+5": None}])
+        from tracker_metrics import compute_bucket_winrate
+        wins, total = compute_bucket_winrate(df, horizon=5)
+        self.assertEqual((wins, total), (0, 0))
+
+    def test_missing_column_returns_zero_zero(self):
+        df = pd.DataFrame([{"代码": "a"}])
+        from tracker_metrics import compute_bucket_winrate
+        wins, total = compute_bucket_winrate(df, horizon=5)
+        self.assertEqual((wins, total), (0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,3 +40,18 @@ def compute_returns(
         future = float(df["close"].iloc[target])
         out[h] = round((future / base - 1) * 100, 2)
     return out
+
+
+def compute_bucket_winrate(df: pd.DataFrame, horizon: int) -> tuple[int, int]:
+    """
+    df 中需有 'T+{horizon}' 列；None/NaN 视为待计算从分母剔除。
+    返回 (胜数, 已计算样本总数)
+    """
+    col = f"T+{horizon}"
+    if col not in df.columns:
+        return 0, 0
+    valid = df[col].dropna()
+    if valid.empty:
+        return 0, 0
+    wins = int((valid > 0).sum())
+    return wins, int(len(valid))
