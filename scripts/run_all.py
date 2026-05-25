@@ -17,6 +17,7 @@ STEPS = [
     ("低位横盘突破", [PY, str(ROOT / "scripts" / "daily_scan.py")]),
     ("市场龙头", [PY, str(ROOT / "scripts" / "scan_dragon.py")]),
     ("横盘向上突破", [PY, str(ROOT / "scripts" / "sideways_scan.py")]),
+    ("回踩5日线", [PY, str(ROOT / "scripts" / "pullback_ma5_scan.py")]),
     ("推送 iPhone", [PY, str(ROOT / "scripts" / "push_summary.py"), "收盘扫描"]),
 ]
 

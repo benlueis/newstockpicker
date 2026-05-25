@@ -19,6 +19,7 @@ from tracker_metrics import (  # noqa: E402
     list_signal_dates,
     load_signal_csv_with_returns,
 )
+from cache_manager import load as _load_cache_bars  # noqa: E402
 
 DATA_DIR = ROOT / "data"
 
@@ -26,6 +27,7 @@ STRATEGIES = [
     ("低位横盘突破", "breakout"),
     ("市场龙头", "dragon_leader"),
     ("横盘向上突破", "sideways_breakout"),
+    ("回踩5日线", "pullback_ma5"),
 ]
 
 DISPLAY_COLS = ["代码", "名称", "T+1", "T+3", "T+5"]
@@ -51,8 +53,7 @@ def _format_pct(v):
 
 def _render_kline(code: str, signal_date: str, days_before: int = 20, days_after: int = 20) -> None:
     """渲染 plotly candlestick，标注信号日竖线。"""
-    from cache_manager import load
-    bars = load(code, days=600)
+    bars = _load_cache_bars(code, days=600)
     if bars.empty:
         st.info(f"{code} 无缓存数据")
         return
@@ -78,13 +79,15 @@ def _render_kline(code: str, signal_date: str, days_before: int = 20, days_after
         decreasing_line_color="green",
         name=code,
     )])
-    fig.add_vline(x=sig_ts, line_color="blue", line_dash="dash",
-                  annotation_text="信号日", annotation_position="top")
+    fig.add_vline(x=sig_ts.to_pydatetime(), line_color="blue", line_dash="dash")
+    fig.add_annotation(x=sig_ts.to_pydatetime(), y=0.95, yref="paper",
+                       text="信号日", showarrow=False, font=dict(color="blue"))
     fig.update_layout(
         height=400, margin=dict(l=10, r=10, t=30, b=10),
         xaxis_rangeslider_visible=False,
         title=f"{code}  信号日 {signal_date}",
     )
+    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -103,7 +106,7 @@ def main() -> None:
     with col_r:
         horizon = st.selectbox("胜率口径", [1, 3, 5], index=2, format_func=lambda h: f"T+{h}")
 
-    cols = st.columns(3)
+    cols = st.columns(len(STRATEGIES))
     for (label, prefix), col in zip(STRATEGIES, cols):
         with col:
             df = _load_table(prefix, iso_date)
@@ -137,7 +140,7 @@ def main() -> None:
                 st.session_state["selected"] = (code, iso_date)
 
     sel = st.session_state.get("selected")
-    if sel:
+    if sel and sel[1] == iso_date:
         code, sig = sel
         st.divider()
         _render_kline(code, sig)

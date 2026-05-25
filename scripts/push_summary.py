@@ -18,6 +18,7 @@ STRATEGIES = [
     ("低位横盘突破", "breakout"),
     ("市场龙头", "dragon_leader"),
     ("横盘向上突破", "sideways_breakout"),
+    ("回踩5日线", "pullback_ma5"),
 ]
 
 

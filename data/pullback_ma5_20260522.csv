@@ -1,0 +1,2 @@
+代码,名称,signal,reason,close_ma5_pct,low_touched_ma5,low_not_too_deep,close_near_ma5,rebound_ratio,rebound_ok,vol_ratio,vol_ok,ma5,ma10,ma20,pct_chg,amount_yi,days_above_ma5,recent_gain_pct,max_drop_10d
+sz.002472,双环传动,True,回踩5日线，缩量企稳,0.88,True,True,True,0.41,True,0.93,True,44.01,43.03,41.05,-0.14,19.28,6,14.11,-3.55
