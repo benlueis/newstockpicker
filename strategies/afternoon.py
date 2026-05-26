@@ -217,47 +217,24 @@ def check_pullback_1450(df: pd.DataFrame) -> dict:
 
 
 # ============================================================
-#  联合扫描 + 交叉打分
+#  联合扫描 + 交叉打分（含降级策略）
 # ============================================================
 
-def scan_stocks(
-    stock_list: list[tuple[str, str]],
-    top_n: int = 5,
-) -> pd.DataFrame:
-    """全市场扫描，返回交叉验证 Top N"""
-    breakout_hits: list[dict] = []
-    pullback_hits: list[dict] = []
-    total = len(stock_list)
-
-    for i, (code, name) in enumerate(stock_list):
-        print(f"\r扫描中 {i+1}/{total}: {code} {name}    ", end="", flush=True)
-        try:
-            df = get_stock_data(code, days=400)
-            if df.empty:
-                continue
-
-            bt = check_breakout_1450(df)
-            if bt["signal"]:
-                breakout_hits.append({"代码": code, "名称": name, **bt})
-
-            pt = check_pullback_1450(df)
-            if pt["signal"]:
-                pullback_hits.append({"代码": code, "名称": name, **pt})
-        except Exception:
-            continue
-
-    print("\n扫描完成！")
-
+def _build_tight_results(
+    breakout_hits: list[dict],
+    pullback_hits: list[dict],
+) -> list[dict]:
+    """组装收紧版结果并交叉打分"""
     bt_codes = {r["代码"] for r in breakout_hits}
     pt_codes = {r["代码"] for r in pullback_hits}
     cross_codes = bt_codes & pt_codes
 
     results: list[dict] = []
-
     for r in breakout_hits:
         is_cross = r["代码"] in cross_codes
         results.append({
             **r,
+            "tier": "tight",
             "strategy": "低位突破",
             "cross_hit": is_cross,
             "composite_score": round(r.get("score_bt", 0) + (25 if is_cross else 0), 1),
@@ -268,13 +245,138 @@ def scan_stocks(
         is_cross = r["代码"] in cross_codes
         results.append({
             **r,
+            "tier": "tight",
             "strategy": "回踩企稳",
             "cross_hit": is_cross,
             "composite_score": round(r.get("score_pt", 0) + (25 if is_cross else 0), 1),
             "score_bt": None,
         })
+    return results
 
-    results.sort(key=lambda x: x["composite_score"], reverse=True)
+
+def _score_loose_breakout(r: dict) -> float:
+    """原版突破策略 → 简易评分 (0-60)"""
+    score = 0.0
+    vol = r.get("vol_ratio", 1.0)
+    pct = r.get("breakout_pct", 0.0)
+    score += min(vol * 10, 30)        # 量比贡献
+    score += min(pct * 3, 20)         # 突破幅度贡献
+    score += min(r.get("box_range", 0.1) * 100, 10)  # 箱体够紧
+    return round(score, 1)
+
+
+def _score_loose_pullback(r: dict) -> float:
+    """原版回踩策略 → 简易评分 (0-60)"""
+    score = 0.0
+    vol = r.get("vol_ratio", 1.0)
+    rebound = r.get("rebound_ratio", 0.0)
+    score += max(15 - vol * 10, 0)     # 缩量贡献（越小越好）
+    score += min(rebound * 35, 25)     # 反弹贡献
+    gain = r.get("recent_gain_pct", 0.0)
+    score += min(max(gain - 5, 0), 20)  # 趋势强度
+    return round(score, 1)
+
+
+def scan_stocks(
+    stock_list: list[tuple[str, str]],
+    top_n: int = 5,
+    fallback_threshold: int = 3,
+) -> pd.DataFrame:
+    """
+    全市场扫描。
+
+    优先跑收紧参数（tight），若 tight 命中数 < fallback_threshold
+    则自动降级到原版参数（loose），两档合并输出。
+    """
+    total = len(stock_list)
+
+    # ── 第一轮：收紧扫描 ────────────────────────
+    tight_breakout: list[dict] = []
+    tight_pullback: list[dict] = []
+
+    for i, (code, name) in enumerate(stock_list):
+        print(f"\r[tight]  {i+1}/{total}: {code} {name}    ", end="", flush=True)
+        try:
+            df = get_stock_data(code, days=400)
+            if df.empty:
+                continue
+            bt = check_breakout_1450(df)
+            if bt["signal"]:
+                tight_breakout.append({"代码": code, "名称": name, **bt})
+            pt = check_pullback_1450(df)
+            if pt["signal"]:
+                tight_pullback.append({"代码": code, "名称": name, **pt})
+        except Exception:
+            continue
+
+    tight_total = len(tight_breakout) + len(tight_pullback)
+    print(f"\n[tight]  扫描完成 → 突破 {len(tight_breakout)} | 回踩 {len(tight_pullback)}")
+
+    results = _build_tight_results(tight_breakout, tight_pullback)
+
+    # ── 第二轮：原版降级（仅当 tight 不够）───────
+    if tight_total < fallback_threshold:
+        print(f"[loose] tight 仅 {tight_total} 只 (阈值 {fallback_threshold})，降级到原版参数...")
+
+        from breakout import check_breakout  # noqa: E402
+        from pullback_ma5 import check_pullback_ma5  # noqa: E402
+
+        loose_breakout: list[dict] = []
+        loose_pullback: list[dict] = []
+
+        for i, (code, name) in enumerate(stock_list):
+            print(f"\r[loose] {i+1}/{total}: {code} {name}    ", end="", flush=True)
+            try:
+                df = get_stock_data(code, days=400)
+                if df.empty:
+                    continue
+                bt = check_breakout(df)
+                if bt["signal"]:
+                    loose_breakout.append({"代码": code, "名称": name, **bt})
+                pt = check_pullback_ma5(df)
+                if pt["signal"]:
+                    loose_pullback.append({"代码": code, "名称": name, **pt})
+            except Exception:
+                continue
+
+        bt_codes = {r["代码"] for r in loose_breakout}
+        pt_codes = {r["代码"] for r in loose_pullback}
+        cross_codes = bt_codes & pt_codes
+
+        for r in loose_breakout:
+            is_cross = r["代码"] in cross_codes
+            score = _score_loose_breakout(r) + (15 if is_cross else 0)
+            results.append({
+                **r,
+                "tier": "loose",
+                "strategy": "低位突破",
+                "cross_hit": is_cross,
+                "composite_score": round(score, 1),
+                "score_bt": None,
+                "score_pt": None,
+            })
+
+        for r in loose_pullback:
+            is_cross = r["代码"] in cross_codes
+            score = _score_loose_pullback(r) + (15 if is_cross else 0)
+            results.append({
+                **r,
+                "tier": "loose",
+                "strategy": "回踩企稳",
+                "cross_hit": is_cross,
+                "composite_score": round(score, 1),
+                "score_bt": None,
+                "score_pt": None,
+            })
+
+        print(f"\n[loose] 扫描完成 → 突破 {len(loose_breakout)} | 回踩 {len(loose_pullback)}")
+
+    # ── 排序：tight 在前，同 tier 按得分降序 ─────
+    def _sort_key(r: dict) -> tuple[int, float]:
+        return (0 if r.get("tier") == "tight" else 1, -r.get("composite_score", 0))
+
+    results.sort(key=_sort_key)
+
     seen: set[str] = set()
     deduped: list[dict] = []
     for r in results:
@@ -284,8 +386,11 @@ def scan_stocks(
 
     top = deduped[:top_n]
 
+    # ── 汇总 ────────────────────────────────────
+    tight_count = sum(1 for r in top if r.get("tier") == "tight")
+    loose_count = sum(1 for r in top if r.get("tier") == "loose")
     print(f"\n=== 14:45 尾盘精选 ===")
-    print(f"低位突破: {len(breakout_hits)} | 回踩企稳: {len(pullback_hits)} | 双命中 🔥: {len(cross_codes)}")
-    print(f"推送 Top {min(top_n, len(top))}")
+    print(f"tight {tight_total} 只 | loose 降级补充 | 推送 Top {min(top_n, len(top))}")
+    print(f"  tight: {tight_count}  loose: {loose_count}")
 
     return pd.DataFrame(top)

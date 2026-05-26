@@ -45,12 +45,14 @@ def _format_result(df: pd.DataFrame) -> str:
     for _, r in df.iterrows():
         code_short = str(r["代码"]).split(".")[-1]
         cross = "🔥" if r.get("cross_hit") else ""
+        tier = r.get("tier", "")
+        tier_tag = "" if tier == "tight" else " ⚠️"
         strategy = r.get("strategy", "")
         score = r.get("composite_score", 0)
         pct = r.get("pct_chg", 0)
         amount = r.get("amount_yi", 0)
         lines.append(
-            f"{cross}{r['名称']}({code_short}) "
+            f"{cross}{r['名称']}({code_short}){tier_tag} "
             f"涨{pct:.1f}% "
             f"分{score:.0f} "
             f"额{amount:.1f}亿 "
