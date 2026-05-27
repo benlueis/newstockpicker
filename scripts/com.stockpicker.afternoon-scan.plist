@@ -27,6 +27,12 @@
   <key>StandardErrorPath</key>
   <string>/Users/xifeiyou/Documents/workspace/newstockpicker/data/logs/afternoon.stderr.log</string>
 
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BARK_URL</key>
+    <string>https://api.day.app/hen9ePKgKGwLGi4VLvwrJn/</string>
+  </dict>
+
   <key>RunAtLoad</key>
   <false/>
 </dict>

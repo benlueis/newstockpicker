@@ -59,7 +59,7 @@ docker run -d \
     -v "$SCRIPT_DIR:/app/scripts" \
     -v "$PROJECT_ROOT/strategies:/app/strategies" \
     -v "$PROJECT_ROOT/app.py:/app/app.py" \
-    -e BARK_URL="${BARK_URL:-}" \
+    -e BARK_URL="${BARK_URL:-https://api.day.app/hen9ePKgKGwLGi4VLvwrJn/}" \
     -e TZ=Asia/Shanghai \
     "$IMAGE_NAME"
 
