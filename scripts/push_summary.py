@@ -46,6 +46,52 @@ def _latest_csv(prefix: str) -> Path | None:
     return paths[-1] if paths else None
 
 
+def build_curated(tag: str) -> str:
+    """从龙头+横盘 CSV 中筛选最具确定性的 Top 5"""
+    lines = ["【🔥 最具确定性精选】"]
+
+    path_d = DATA_DIR / f"dragon_leader_{tag}.csv"
+    if path_d.exists():
+        df = pd.read_csv(path_d)
+        if not df.empty and "leader_score" in df.columns:
+            df = df[(df["ret_5d"] <= 15) & (df["pct_chg"] <= 8.5)].copy()
+            df["final_score"] = df["leader_score"] + df["leader_type"].apply(
+                lambda x: 10 if "板块龙头" in str(x) else 0
+            )
+            df = df.sort_values("final_score", ascending=False)
+            top = df.head(5)
+            for _, r in top.iterrows():
+                code = r["代码"].split(".")[-1]
+                dual = "🔥" if "板块龙头" in str(r.get("leader_type", "")) else ""
+                lines.append(
+                    f"{dual}{r['名称']}({code}) "
+                    f"分{r['final_score']:.0f} "
+                    f"20日{r['ret_20d']:.0f}% "
+                    f"5日{r['ret_5d']:.1f}% "
+                    f"量{r['vol_ratio']:.1f}"
+                )
+
+    path_s = DATA_DIR / f"sideways_breakout_{tag}.csv"
+    if path_s.exists():
+        df = pd.read_csv(path_s)
+        if not df.empty:
+            df = df.sort_values("vol_ratio", ascending=False)
+            top = df.head(3)
+            if len(top) > 0:
+                lines.append("─ 横盘突破 ─")
+            for _, r in top.iterrows():
+                code = r["代码"].split(".")[-1]
+                lines.append(
+                    f"  {r['名称']}({code}) "
+                    f"破{r['breakout_pct']:.1f}% "
+                    f"量{r['vol_ratio']:.1f}"
+                )
+
+    if len(lines) == 1:
+        return "【🔥 最具确定性精选】无信号"
+    return "\n".join(lines)
+
+
 def build_section(label: str, prefix: str, tag: str) -> str:
     path = DATA_DIR / f"{prefix}_{tag}.csv"
     if not path.exists():
@@ -76,8 +122,9 @@ def main() -> int:
     # 允许通过参数指定 title 前缀（盘前提醒 vs 收盘扫描）
     title_prefix = sys.argv[1] if len(sys.argv) > 1 else "选股扫描"
 
+    curated = build_curated(tag)
     sections = [build_section(label, prefix, tag) for label, prefix in STRATEGIES]
-    body = "\n\n".join(sections)
+    body = curated + "\n\n" + "\n\n".join(sections)
     title = f"{today} {title_prefix}"
 
     print(title)
