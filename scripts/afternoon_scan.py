@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -30,44 +31,36 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pandas as pd
 
-from cache_manager import incremental_update
+from cache_manager import incremental_update, fetch_intraday_bar
 from common import is_trading_day
 from notify import send
 
 STOCK_LIST = ROOT / "data" / "stock_list.csv"
 OUTPUT_DIR = ROOT / "data"
 TOP_N = 5
-CACHE_WORKERS = 4  # 并行缓存更新的进程数
+CACHE_WORKERS = 4
+INTRA_WORKERS = 10
 
 
-def _update_cache_parallel(stock_list: list[tuple[str, str]]) -> tuple[int, int, list[str]]:
-    """
-    并行增量更新缓存，返回 (成功数, 失败数, 失败代码列表)。
-    使用 ProcessPoolExecutor，参照 update_cache.py 的多进程模式。
-    """
-    print(f"Step 1/2: 并行增量更新缓存 (workers={CACHE_WORKERS}) ...")
-    total = len(stock_list)
+def _update_one_cache(code: str) -> str | None:
+    """单股缓存更新（含重试应对 SQLite 并发）"""
+    for _ in range(3):
+        try:
+            df = incremental_update(code)
+            return code if not df.empty else None
+        except Exception:
+            time.sleep(1)
+    return None
+
+
+def _update_cache_parallel(codes: list[str]) -> tuple[int, list[str]]:
+    print(f"Step 1/3: 并行增量更新缓存 (workers={CACHE_WORKERS}) ...")
+    total = len(codes)
     updated = 0
-    failed = 0
     failed_codes: list[str] = []
 
-    # 只更新缓存，不关心返回的 DataFrame（含重试应对 SQLite 并发）
-    def _update_one(code: str) -> str | None:
-        import time
-        for attempt in range(3):
-            try:
-                df = incremental_update(code)
-                return code if not df.empty else None
-            except Exception:
-                if attempt < 2:
-                    time.sleep(1)
-        return None
-
-    # 提取纯 code 列表用于并行处理
-    codes = [code for code, _ in stock_list]
-
     with ProcessPoolExecutor(max_workers=CACHE_WORKERS) as executor:
-        futures = {executor.submit(_update_one, code): code for code in codes}
+        futures = {executor.submit(_update_one_cache, c): c for c in codes}
         completed = 0
         for future in as_completed(futures):
             completed += 1
@@ -79,16 +72,38 @@ def _update_cache_parallel(stock_list: list[tuple[str, str]]) -> tuple[int, int,
                 if result:
                     updated += 1
             except Exception as e:
-                failed += 1
                 failed_codes.append(code)
                 print(f"\n⚠️ 缓存更新失败 {code}: {e}", file=sys.stderr)
 
-    print(f"\r  缓存更新完成: {updated}/{total} 有效, {failed} 失败")
-    return updated, failed, failed_codes
+    print(f"\r  缓存更新完成: {updated}/{total} 有效, {len(failed_codes)} 失败")
+    return updated, failed_codes
+
+
+def _prefetch_intraday_parallel(codes: list[str]) -> dict:
+    print(f"Step 2/3: 并行预取盘中数据 (workers={INTRA_WORKERS}) ...")
+    total = len(codes)
+    intraday_map = {}
+    done = 0
+
+    with ThreadPoolExecutor(max_workers=INTRA_WORKERS) as pool:
+        futures = {pool.submit(fetch_intraday_bar, c): c for c in codes}
+        for f in as_completed(futures):
+            code = futures[f]
+            done += 1
+            if done % 200 == 0 or done == total:
+                print(f"\r  盘中数据 {done}/{total}    ", end="", flush=True)
+            try:
+                df = f.result(timeout=10)
+                if not df.empty:
+                    intraday_map[code] = df
+            except Exception:
+                pass
+
+    print(f"\r  盘中数据就绪: {len(intraday_map)}/{total}")
+    return intraday_map
 
 
 def _format_result(df: pd.DataFrame) -> str:
-    """将结果 DataFrame 格式化为推送文本"""
     lines: list[str] = []
     for _, r in df.iterrows():
         code_short = str(r["代码"]).split(".")[-1]
@@ -113,7 +128,6 @@ def main() -> int:
     today = datetime.today().strftime("%Y-%m-%d")
     today_tag = datetime.today().strftime("%Y%m%d")
 
-    # ── 交易日检查 ──────────────────────────────
     if not is_trading_day(today):
         print(f"{today} 非交易日，跳过扫描")
         return 0
@@ -123,55 +137,27 @@ def main() -> int:
         print("请先运行: python data/get_stock_list.py")
         return 1
 
-    # ── 加载股票池 ──────────────────────────────
     df_list = pd.read_csv(STOCK_LIST)
-    stock_list: list[tuple[str, str]] = list(
-        zip(df_list["code"], df_list["code_name"])
-    )
-    total = len(stock_list)
+    stock_list = list(zip(df_list["code"], df_list["code_name"]))
+    codes = [c for c, _ in stock_list]
+    total = len(codes)
     print(f"14:45 尾盘精选扫描启动 | 数据源: tencent | 股票池: {total} 只")
 
-    # ── 第一步：并行增量更新缓存 ────────────────
-    cache_updated, cache_failed, cache_failed_codes = _update_cache_parallel(stock_list)
+    cache_updated, cache_failed = _update_cache_parallel(codes)
+    intraday_map = _prefetch_intraday_parallel(codes)
 
-    # ── 第二步：并行预取盘中分钟线 ────────────────
-    print("Step 2/3: 并行预取盘中数据...")
-    from concurrent.futures import ThreadPoolExecutor as ThreadPool
-    from cache_manager import fetch_intraday_bar
-    intraday_map: dict[str, pd.DataFrame] = {}
-    codes = [c for c, _ in stock_list]
-    done = 0
-    with ThreadPool(max_workers=10) as pool:
-        futures = {pool.submit(fetch_intraday_bar, c): c for c in codes}
-        for f in as_completed(futures):
-            code = futures[f]
-            done += 1
-            if done % 200 == 0 or done == total:
-                print(f"\r  盘中数据 {done}/{total}    ", end="", flush=True)
-            try:
-                df = f.result(timeout=10)
-                if not df.empty:
-                    intraday_map[code] = df
-            except Exception:
-                pass
-    print(f"\r  盘中数据就绪: {len(intraday_map)}/{total}")
-
-    # ── 第三步：策略扫描 ─────────────────────────
     print("Step 3/3: 策略扫描...")
-    from afternoon import scan_stocks  # noqa: E402
-
+    from afternoon import scan_stocks
     result_df = scan_stocks(stock_list, top_n=TOP_N, intraday_map=intraday_map)
 
-    # ── 输出 ────────────────────────────────────
     out_path = OUTPUT_DIR / f"afternoon_{today_tag}.csv"
     result_df.to_csv(out_path, index=False)
     print(f"\n结果已保存: {out_path}")
 
-    # ── 推送（含失败汇总） ──────────────────────
     if result_df.empty:
         msg = "今日无符合条件的尾盘买入信号"
-        if cache_failed > 0:
-            msg += f"\n⚠️ {cache_failed} 只缓存更新失败"
+        if cache_failed:
+            msg += f"\n⚠️ {len(cache_failed)} 只缓存更新失败"
         print(msg)
         send(f"{today} 14:45 尾盘精选", msg, group="afternoon-scan")
         return 0
@@ -180,11 +166,11 @@ def main() -> int:
     body = _format_result(result_df)
     print(body)
 
-    if cache_failed > 0:
-        failed_preview = ", ".join(cache_failed_codes[:5])
-        if len(cache_failed_codes) > 5:
-            failed_preview += f", ... 共 {cache_failed} 只"
-        body += f"\n\n⚠️ 缓存更新失败: {failed_preview}"
+    if cache_failed:
+        preview = ", ".join(cache_failed[:5])
+        if len(cache_failed) > 5:
+            preview += f", ... 共 {len(cache_failed)} 只"
+        body += f"\n\n⚠️ 缓存更新失败: {preview}"
 
     send(f"{today} 14:45 尾盘精选", body, group="afternoon-scan")
     return 0
