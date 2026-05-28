@@ -2,15 +2,15 @@
 14:45 尾盘精选扫描（收盘前买入专用）
 
 数据源: tencent（腾讯行情，盘中实时）
-策略:   afternoon.py — 低位突破(收紧) + 回踩企稳(收紧) + 交叉验证
-输出:   data/afternoon_{date}.csv + Bark 推送 Top 5
+策略:   afternoon.py（低位突破+回踩企稳）+ dragon_leader + sideways_breakout
+输出:   data/afternoon_{date}.csv + Bark 推送
 
 用法:
     python scripts/afternoon_scan.py
 
 环境变量:
-    DATA_SOURCE=tencent  （强制，确保当日盘中数据可用）
-    BARK_URL=...          （可选，Bark 推送地址）
+    DATA_SOURCE=tencent
+    BARK_URL=...
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from datetime import datetime
 from pathlib import Path
 
-# ── 必须在任何策略导入前设置数据源为实时源 ──
 os.environ["DATA_SOURCE"] = "tencent"
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +42,6 @@ INTRA_WORKERS = 10
 
 
 def _update_one_cache(code: str) -> str | None:
-    """单股缓存更新（含重试应对 SQLite 并发）"""
     for _ in range(3):
         try:
             df = incremental_update(code)
@@ -73,7 +71,7 @@ def _update_cache_parallel(codes: list[str]) -> tuple[int, list[str]]:
                     updated += 1
             except Exception as e:
                 failed_codes.append(code)
-                print(f"\n⚠️ 缓存更新失败 {code}: {e}", file=sys.stderr)
+                print(f"\n⚠️ 缓存 {code}: {e}", file=sys.stderr)
 
     print(f"\r  缓存更新完成: {updated}/{total} 有效, {len(failed_codes)} 失败")
     return updated, failed_codes
@@ -103,27 +101,6 @@ def _prefetch_intraday_parallel(codes: list[str]) -> dict:
     return intraday_map
 
 
-def _format_result(df: pd.DataFrame) -> str:
-    lines: list[str] = []
-    for _, r in df.iterrows():
-        code_short = str(r["代码"]).split(".")[-1]
-        cross = "🔥" if r.get("cross_hit") else ""
-        tier = r.get("tier", "")
-        tier_tag = "" if tier == "tight" else " ⚠️"
-        strategy = r.get("strategy", "")
-        score = r.get("composite_score", 0)
-        pct = r.get("pct_chg", 0)
-        amount = r.get("amount_yi", 0)
-        lines.append(
-            f"{cross}{r['名称']}({code_short}){tier_tag} "
-            f"涨{pct:.1f}% "
-            f"分{score:.0f} "
-            f"额{amount:.1f}亿 "
-            f"[{strategy}]"
-        )
-    return "\n".join(lines)
-
-
 def main() -> int:
     today = datetime.today().strftime("%Y-%m-%d")
     today_tag = datetime.today().strftime("%Y%m%d")
@@ -146,34 +123,75 @@ def main() -> int:
     cache_updated, cache_failed = _update_cache_parallel(codes)
     intraday_map = _prefetch_intraday_parallel(codes)
 
-    print("Step 3/3: 策略扫描...")
+    # ── Step 3: 全策略扫描 ──────────────────────
+    print("Step 3/3: 全策略扫描...")
     from afternoon import scan_stocks
-    result_df = scan_stocks(stock_list, top_n=TOP_N, intraday_map=intraday_map)
+    from dragon_leader import scan_stocks as scan_dragon
+    from sideways_breakout import scan_stocks as scan_sideways
+
+    at_df = scan_stocks(stock_list, top_n=TOP_N, intraday_map=intraday_map)
+    print("  市场龙头...")
+    dl_df = scan_dragon(stock_list)
+    print("  横盘突破...")
+    sb_df = scan_sideways(stock_list)
 
     out_path = OUTPUT_DIR / f"afternoon_{today_tag}.csv"
-    result_df.to_csv(out_path, index=False)
+    all_parts = [at_df]
+    if not dl_df.empty:
+        all_parts.append(dl_df)
+    if not sb_df.empty:
+        all_parts.append(sb_df)
+    pd.concat(all_parts, ignore_index=True).to_csv(out_path, index=False)
     print(f"\n结果已保存: {out_path}")
 
-    if result_df.empty:
+    # ── 组装推送 ────────────────────────────────
+    parts = []
+    if not at_df.empty:
+        parts.append(f"【尾盘精选】{len(at_df)}只\n" + _fmt_afternoon(at_df))
+    if not dl_df.empty:
+        parts.append(f"【市场龙头】{len(dl_df)}只\n" + _fmt_dragon(dl_df))
+    if not sb_df.empty:
+        parts.append(f"【横盘突破】{len(sb_df)}只\n" + _fmt_sideways(sb_df))
+
+    if not parts:
         msg = "今日无符合条件的尾盘买入信号"
         if cache_failed:
             msg += f"\n⚠️ {len(cache_failed)} 只缓存更新失败"
         print(msg)
-        send(f"{today} 14:45 尾盘精选", msg, group="afternoon-scan")
+        send(f"14:45 尾盘精选 {today}", msg, group="afternoon-scan")
         return 0
 
-    print(f"\n推送 Top {len(result_df)}:")
-    body = _format_result(result_df)
-    print(body)
-
+    body = "\n\n".join(parts)
     if cache_failed:
-        preview = ", ".join(cache_failed[:5])
-        if len(cache_failed) > 5:
-            preview += f", ... 共 {len(cache_failed)} 只"
-        body += f"\n\n⚠️ 缓存更新失败: {preview}"
-
-    send(f"{today} 14:45 尾盘精选", body, group="afternoon-scan")
+        body += f"\n\n⚠️ 缓存失败: {len(cache_failed)} 只"
+    print(f"\n推送:\n{body[:500]}")
+    send(f"14:45 尾盘精选 {today}", body, group="afternoon-scan")
     return 0
+
+
+def _fmt_afternoon(df: pd.DataFrame) -> str:
+    lines = []
+    for _, r in df.iterrows():
+        code = str(r["代码"]).split(".")[-1]
+        cross = "🔥" if r.get("cross_hit") else ""
+        lines.append(f"{cross}{r['名称']}({code}) 分{r.get('composite_score',0):.0f} [{r.get('strategy','')}]")
+    return "\n".join(lines)
+
+
+def _fmt_dragon(df: pd.DataFrame) -> str:
+    lines = []
+    for _, r in df.head(5).iterrows():
+        code = str(r["代码"]).split(".")[-1]
+        lines.append(f"{r['名称']}({code}) 分{r.get('leader_score',0):.0f} 量{r.get('vol_ratio',0):.1f}")
+    return "\n".join(lines)
+
+
+def _fmt_sideways(df: pd.DataFrame) -> str:
+    lines = []
+    for _, r in df.head(3).iterrows():
+        code = str(r["代码"]).split(".")[-1]
+        lines.append(f"{r['名称']}({code}) 破{r.get('breakout_pct',0):.1f}% 量{r.get('vol_ratio',0):.1f}")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
