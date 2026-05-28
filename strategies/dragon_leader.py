@@ -142,6 +142,7 @@ def evaluate_leader(
         "drawdown_ok": drawdown_ok,
     }
 
+
 def _benchmark_returns() -> tuple[float, float]:
     idx = get_index_data(days=120)
     if len(idx) < 25:
