@@ -32,6 +32,10 @@ COPY strategies/  ./strategies/
 COPY data/        ./data/
 COPY app.py       .
 
+# 创建非 root 用户运行
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
 # 日志输出不缓冲（cron 中可即时看到）
 ENV PYTHONUNBUFFERED=1
 

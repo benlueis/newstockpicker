@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
+
+import requests
 
 BARK_URL_ENV = "BARK_URL"
 
@@ -24,18 +24,16 @@ def send(
     if url:
         payload["url"] = url
 
-    req = urllib.request.Request(
-        bark_url.rstrip("/"),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            ok = 200 <= resp.status < 300
-            print(f"[notify] {'成功' if ok else f'失败 status={resp.status}'}")
-            return ok
-    except urllib.error.URLError as exc:
+        resp = requests.post(
+            bark_url.rstrip("/"),
+            json=payload,
+            timeout=10,
+        )
+        ok = 200 <= resp.status_code < 300
+        print(f"[notify] {'成功' if ok else f'失败 status={resp.status_code}'}")
+        return ok
+    except requests.RequestException as exc:
         print(f"[notify] 推送异常: {exc}")
         return False
 
