@@ -81,7 +81,7 @@ sideways_breakout:
   default:
     lookback_days: 120
     box_days: 30
-    max_box_range: 1.12         # 箱体最高 / 最低
+    max_box_range: 1.08         # 箱体最高 / 最低
     min_breakout_pct: 2.0       # 突破当日相对箱顶涨幅
     min_vol_ratio: 1.8          # 当日量 / 箱体期均量
     max_position_120d: 0.75     # 箱顶在 120 日通道中的位置上限

@@ -19,7 +19,7 @@ BUY_ACTION = "BUY"
 DEFAULT_PARAMS: dict = {
     "lookback_days": 120,
     "box_days": 30,
-    "max_box_range": 1.12,
+    "max_box_range": 1.08,
     "min_breakout_pct": 2.0,
     "min_vol_ratio": 1.8,
     "max_position_120d": 0.75,
@@ -88,6 +88,11 @@ def check_sideways_breakout(df: pd.DataFrame, params: dict | None = None) -> dic
     )
     no_long_upper = upper_shadow_ratio <= p["max_upper_shadow_ratio"]
 
+    # 突破后回踩确认：盘中最低价不能跌回箱体
+    pullback_ok = today["low"] >= box_high * 0.98 if price_break else True
+    if price_break and not pullback_ok:
+        return {"signal": False, "action": WAIT_ACTION, "reason": "盘中跌回箱体"}
+
     signal = (
         position_ok
         and trend_ok
@@ -96,6 +101,7 @@ def check_sideways_breakout(df: pd.DataFrame, params: dict | None = None) -> dic
         and vol_surge
         and up_candle
         and no_long_upper
+        and pullback_ok
     )
 
     return {
