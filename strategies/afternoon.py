@@ -14,16 +14,19 @@ v2: 不再内联策略逻辑，改为调用 breakout / pullback_ma5 原函数 + 
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from common import get_stock_data
 from breakout import check_breakout
 from pullback_ma5 import check_pullback_ma5
+from cache_manager import fetch_intraday_bar  # noqa: E402
 
 
 # ── 尾盘收紧参数（从 YAML 加载，缺失时回退到内置值）──────
@@ -202,6 +205,18 @@ def scan_stocks(
             df = get_stock_data(code, days=400)
             if df.empty:
                 continue
+
+            # 融合盘中分钟线数据（当日实时K线）
+            intraday = fetch_intraday_bar(code)
+            if not intraday.empty and len(df) > 0:
+                last_date = str(df["date"].iloc[-1])[:10]
+                today_str = datetime.today().strftime("%Y-%m-%d")
+                if str(intraday["date"].iloc[0])[:10] == today_str:
+                    # 避免重复：如果已有今日数据（盘后），跳过
+                    if last_date != today_str:
+                        df = pd.concat([df, intraday], ignore_index=True)
+                        df["pctChg"] = df["close"].pct_change() * 100
+                        df["pctChg"] = df["pctChg"].fillna(0.0)
 
             # 调用原策略 + tightened params
             bt = check_breakout(df, params=TIGHT_BT)

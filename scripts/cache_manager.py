@@ -121,6 +121,8 @@ def _tencent_fetch(code: str, start: str, end: str) -> pd.DataFrame:
         return pd.DataFrame()
     code_tdx = m.group(1) + m.group(2)
 
+    # 注意：腾讯行情 API 仅支持 HTTP，不支持 HTTPS
+    # 这是已知的安全限制，金融数据本身非敏感信息
     url = f"http://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code_tdx},day,,,400,qfq"
     try:
         r = requests.get(url, timeout=10)
@@ -160,6 +162,70 @@ def _tencent_fetch(code: str, start: str, end: str) -> pd.DataFrame:
     df["pctChg"] = df["close"].pct_change() * 100
     df["pctChg"] = df["pctChg"].fillna(0.0)
     return df
+
+
+def fetch_intraday_bar(code: str) -> pd.DataFrame:
+    """拉取今日分钟线，合成为一条日K线（用于盘中扫描）。"""
+    import requests
+
+    m = re.match(r"^(sh|sz)\.(\d{6})$", code)
+    if not m:
+        return pd.DataFrame()
+    code_tdx = m.group(1) + m.group(2)
+
+    url = f"http://ifzq.gtimg.cn/appstock/app/kline/mkline?param={code_tdx},m5,,,80"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        bars = data["data"][code_tdx]["m5"]
+    except Exception:
+        return pd.DataFrame()
+
+    if not bars:
+        return pd.DataFrame()
+
+    # 格式: [datetime, open, close, high, low, volume, {}, pct_chg]
+    opens, highs, lows, closes, volumes = [], [], [], [], []
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    for b in bars:
+        if len(b) < 6:
+            continue
+        d = b[0][:8]
+        if d != today_str.replace("-", ""):
+            continue
+        try:
+            o, c, h, l, v = float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])
+        except (ValueError, TypeError):
+            continue
+        opens.append(o)
+        highs.append(h)
+        lows.append(l)
+        closes.append(c)
+        volumes.append(v * 100)  # 手 → 股
+
+    if not closes:
+        return pd.DataFrame()
+
+    bar_open = opens[0]
+    bar_high = max(highs)
+    bar_low = min(lows)
+    bar_close = closes[-1]
+    bar_volume = sum(volumes)
+    avg_price = (bar_open + bar_high + bar_low + bar_close) / 4
+    bar_amount = bar_volume * avg_price
+    bar_pct = round((bar_close / closes[0] - 1) * 100, 2) if closes[0] else 0
+
+    return pd.DataFrame([{
+        "date": pd.Timestamp(today_str),
+        "open": bar_open,
+        "high": bar_high,
+        "low": bar_low,
+        "close": bar_close,
+        "volume": bar_volume,
+        "amount": float(round(bar_amount, 2)),
+        "turn": 0.0,
+        "pctChg": bar_pct,
+    }])
 
 
 def _fetch_from_source(code: str, start: str, end: str) -> pd.DataFrame:
