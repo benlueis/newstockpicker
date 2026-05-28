@@ -40,6 +40,7 @@ DEFAULT_PARAMS: dict = {
     "min_leader_score": 65.0,
 }
 
+
 def _period_return(close: pd.Series, n: int) -> float | None:
     if len(close) <= n:
         return None
@@ -193,7 +194,6 @@ def scan_stocks(
     params: dict | None = None,
 ) -> pd.DataFrame:
     """扫描股票池，返回龙头列表"""
-    p = merge_params(params, DEFAULT_PARAMS)
     mktcap_map = mktcap_map or {}
     bench_5d, bench_20d = _benchmark_returns()
     print(f"基准沪深300: 5日 {bench_5d:+.2f}% | 20日 {bench_20d:+.2f}%")

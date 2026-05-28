@@ -1,7 +1,6 @@
 """Bark 推送辅助：从环境变量 BARK_URL 读取目标地址，向 iPhone 发送通知。"""
 from __future__ import annotations
 
-import json
 import os
 
 import requests

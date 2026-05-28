@@ -1,0 +1,2 @@
+代码,名称,signal,reason,close_ma5_pct,low_touched_ma5,low_not_too_deep,close_near_ma5,rebound_ratio,rebound_ok,vol_ratio,vol_ok,ma5,ma10,ma20,pct_chg,amount_yi,days_above_ma5,recent_gain_pct,max_drop_10d
+sh.603501,豪威集团,True,回踩5日线，缩量企稳,1.36,True,True,True,0.38,True,1.01,True,104.64,103.1,101.98,-2.63,45.98,5,11.51,-2.91

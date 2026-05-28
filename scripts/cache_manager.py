@@ -256,22 +256,22 @@ def _sqlite_batch_upsert(conn: sqlite3.Connection, code: str, df: pd.DataFrame) 
     """批量插入或更新 K 线数据到 SQLite"""
     if df.empty:
         return
-    
+
     # 准备数据：添加 code 列并转换格式
     df_insert = df.copy()
     df_insert["code"] = code
     df_insert["date"] = df_insert["date"].astype(str)
-    
+
     # 确保所有数值列都是 float 类型
     numeric_cols = ["open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]
     for col in numeric_cols:
         if col in df_insert.columns:
             df_insert[col] = pd.to_numeric(df_insert[col], errors="coerce").fillna(0.0)
-    
+
     # 选择需要的列并转换为元组列表
     columns = ["code", "date", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]
     rows = df_insert[columns].values.tolist()
-    
+
     conn.executemany(
         "INSERT OR REPLACE INTO kline VALUES (?,?,?,?,?,?,?,?,?,?)",
         rows,

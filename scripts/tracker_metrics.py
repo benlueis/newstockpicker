@@ -118,4 +118,3 @@ def load_signal_csv_with_returns(
     for h in horizons:
         df[f"T+{h}"] = cols[h]
     return df
-
