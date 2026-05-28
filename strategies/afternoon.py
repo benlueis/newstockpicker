@@ -186,12 +186,13 @@ def scan_stocks(
     stock_list: list[tuple[str, str]],
     top_n: int = 5,
     fallback_threshold: int = 3,
+    intraday_map: dict | None = None,
 ) -> pd.DataFrame:
     """
     全市场扫描。
 
-    优先跑收紧参数（tight），若 tight 命中数 < fallback_threshold
-    则自动降级到原版参数（loose），两档合并输出。
+    Args:
+        intraday_map: {code: DataFrame} 预取的盘中分钟线合成日K，避免逐股HTTP请求
     """
     total = len(stock_list)
 
@@ -207,8 +208,8 @@ def scan_stocks(
                 continue
 
             # 融合盘中分钟线数据（当日实时K线）
-            intraday = fetch_intraday_bar(code)
-            if not intraday.empty and len(df) > 0:
+            intraday = intraday_map.get(code) if intraday_map else fetch_intraday_bar(code)
+            if intraday is not None and not intraday.empty and len(df) > 0:
                 last_date = str(df["date"].iloc[-1])[:10]
                 today_str = datetime.today().strftime("%Y-%m-%d")
                 if str(intraday["date"].iloc[0])[:10] == today_str:

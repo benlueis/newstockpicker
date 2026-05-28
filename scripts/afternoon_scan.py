@@ -134,11 +134,33 @@ def main() -> int:
     # ── 第一步：并行增量更新缓存 ────────────────
     cache_updated, cache_failed, cache_failed_codes = _update_cache_parallel(stock_list)
 
-    # ── 第二步：策略扫描 ─────────────────────────
-    print("Step 2/2: 策略扫描...")
+    # ── 第二步：并行预取盘中分钟线 ────────────────
+    print("Step 2/3: 并行预取盘中数据...")
+    from concurrent.futures import ThreadPoolExecutor as ThreadPool
+    from cache_manager import fetch_intraday_bar
+    intraday_map: dict[str, pd.DataFrame] = {}
+    codes = [c for c, _ in stock_list]
+    done = 0
+    with ThreadPool(max_workers=10) as pool:
+        futures = {pool.submit(fetch_intraday_bar, c): c for c in codes}
+        for f in as_completed(futures):
+            code = futures[f]
+            done += 1
+            if done % 200 == 0 or done == total:
+                print(f"\r  盘中数据 {done}/{total}    ", end="", flush=True)
+            try:
+                df = f.result(timeout=10)
+                if not df.empty:
+                    intraday_map[code] = df
+            except Exception:
+                pass
+    print(f"\r  盘中数据就绪: {len(intraday_map)}/{total}")
+
+    # ── 第三步：策略扫描 ─────────────────────────
+    print("Step 3/3: 策略扫描...")
     from afternoon import scan_stocks  # noqa: E402
 
-    result_df = scan_stocks(stock_list, top_n=TOP_N)
+    result_df = scan_stocks(stock_list, top_n=TOP_N, intraday_map=intraday_map)
 
     # ── 输出 ────────────────────────────────────
     out_path = OUTPUT_DIR / f"afternoon_{today_tag}.csv"
