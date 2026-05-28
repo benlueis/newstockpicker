@@ -1,5 +1,5 @@
 """
-生成 / 更新股票池 CSV（从本地 parquet 缓存读取，近乎秒级）
+生成 / 更新股票池 CSV
 
 用法：
     python data/get_stock_list.py          # 7 天内已生成则跳过
@@ -12,14 +12,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import baostock as bs
+import akshare as ak
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 OUTPUT = ROOT / "data" / "stock_list.csv"
-FRESH_DAYS = 7  # stock_list.csv 缓存有效天数
+FRESH_DAYS = 7
 
 # 过滤参数
 MIN_CLOSE = 6
@@ -28,29 +28,22 @@ MIN_MKTCAP = 50  # 亿元
 
 
 def _get_stock_basic() -> pd.DataFrame:
-    """获取主板 non-ST 股票基础列表（快速 baostock 查询）"""
-    rs = bs.query_stock_basic(code_name="")
-    data = []
-    while rs.error_code == "0" and rs.next():
-        data.append(rs.get_row_data())
+    """获取主板 non-ST 股票基础列表（通过 akshare）"""
+    df = ak.stock_info_a_code_name()
+    df = df.rename(columns={"code": "code", "name": "code_name"})
 
-    df = pd.DataFrame(data, columns=rs.fields)
-    df = df[df["code"].str.match(r"^(sh\.6[^8]|sz\.00)")]
-    df = df[df["type"] == "1"]
+    # 过滤：只保留沪市主板 600-603 和深市主板 000-002
+    df = df[df["code"].str.match(r"^(60[0-3]|000|001|002)\d{3}$")]
+    # 排除 ST
     df = df[~df["code_name"].str.contains("ST|退", na=False)]
     df = df[["code", "code_name"]].reset_index(drop=True)
+
+    # 转换为 sh./sz. 格式
+    df["code"] = df["code"].apply(
+        lambda c: f"sh.{c}" if c.startswith("60") else f"sz.{c}"
+    )
     print(f"主板非ST股票: {len(df)} 只")
     return df
-
-
-def _compute_mktcap(close: float, amount: float, turn: float) -> bool:
-    """计算并判断是否满足股价/市值过滤"""
-    if not (close > 0 and amount > 0 and turn > 0):
-        return False
-    if not (MIN_CLOSE <= close <= MAX_CLOSE):
-        return False
-    mktcap = amount / turn * 100 / 1e8
-    return mktcap >= MIN_MKTCAP
 
 
 def _regenerate() -> None:
@@ -59,7 +52,7 @@ def _regenerate() -> None:
 
     results: list[dict] = []
 
-    # ── 一次 SQL 查询拿到所有股票最新 5 条数据 ──
+    # ── 一次 SQL 查询拿到所有股票最新数据 ──
     from sqlite3 import connect as _sqlite_conn
     db_path = ROOT / "data" / "cache" / "stocks.db"
     codes_in_db: set[str] = set()
@@ -83,46 +76,42 @@ def _regenerate() -> None:
             for code, grp in bulk.groupby("code"):
                 for _, r in grp.head(5).iterrows():
                     c, a, t = r["close"], r["amount"], r["turn"]
-                    if _compute_mktcap(c, a, t):
-                        mc = a / t * 100 / 1e8
-                        results.append({"code": code, "close": round(c, 2), "mktcap": round(mc, 2)})
-                        break
+                    if c > 0 and a > 0 and t > 0:
+                        if MIN_CLOSE <= c <= MAX_CLOSE:
+                            mc = a / t * 100 / 1e8
+                            if mc >= MIN_MKTCAP:
+                                results.append({"code": code, "close": round(c, 2), "mktcap": round(mc, 2)})
+                                break
         finally:
             conn.close()
 
-    # ── 不在 SQLite 中的股票，在线补查 ──
+    # ── 不在 SQLite 中的股票，使用 akshare 在线补查 ──
     missing = [c for c in df_basic["code"] if c not in codes_in_db]
     if missing:
         print(f"  在线补查 {len(missing)} 只（不在 SQLite 中）...")
-        from datetime import datetime, timedelta
+        try:
+            spot = ak.stock_zh_a_spot_em()
+            spot["code_raw"] = spot["代码"].apply(
+                lambda c: f"sh.{c}" if c.startswith("6") else f"sz.{c}"
+            )
+            spot_map = {}
+            for _, r in spot.iterrows():
+                code = r["code_raw"]
+                try:
+                    close = float(r["最新价"])
+                    mktcap = float(r["总市值"]) / 1e8 if pd.notna(r.get("总市值")) else None
+                    if close > 0 and mktcap:
+                        spot_map[code] = (close, mktcap)
+                except (ValueError, KeyError):
+                    continue
 
-        for code in missing:
-            try:
-                end = datetime.today().strftime("%Y-%m-%d")
-                start = (datetime.today() - timedelta(days=10)).strftime("%Y-%m-%d")
-                rs = bs.query_history_k_data_plus(
-                    code, "date,close,amount,turn",
-                    start_date=start, end_date=end,
-                    frequency="d", adjustflag="3",
-                )
-                rows = []
-                while rs.error_code == "0" and rs.next():
-                    rows.append(rs.get_row_data())
-                valid = []
-                for rec in rows[-5:]:
-                    try:
-                        c, a, t = float(rec[1]), float(rec[2]), float(rec[3])
-                        if c > 0 and a > 0 and t > 0:
-                            valid.append((c, a, t))
-                    except (ValueError, IndexError):
-                        continue
-                if valid:
-                    cp = valid[-1][0]
-                    mc = sum(a / t * 100 / 1e8 for _, a, t in valid) / len(valid)
+            for code in missing:
+                if code in spot_map:
+                    cp, mc = spot_map[code]
                     if MIN_CLOSE <= cp <= MAX_CLOSE and mc >= MIN_MKTCAP:
                         results.append({"code": code, "close": round(cp, 2), "mktcap": round(mc, 2)})
-            except Exception:
-                continue
+        except Exception as e:
+            print(f"  在线补查失败: {e}")
 
     # 合并名称 & 输出
     name_map = dict(zip(df_basic["code"], df_basic["code_name"]))
@@ -153,12 +142,8 @@ def main() -> int:
             print(f"当前股票池: {len(df)} 只")
             return 0
 
-    bs.login()
-    try:
-        _regenerate()
-        return 0
-    finally:
-        bs.logout()
+    _regenerate()
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
-"""读取当日三策略 CSV，汇总后通过 Bark 推送到 iPhone。"""
+"""读取当日策略 CSV，汇总后通过 Bark 推送到 iPhone。"""
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -122,10 +123,13 @@ def main() -> int:
     # 允许通过参数指定 title 前缀（盘前提醒 vs 收盘扫描）
     title_prefix = sys.argv[1] if len(sys.argv) > 1 else "选股扫描"
 
+    # 检测运行环境
+    source_tag = "[GitHub Action]" if os.environ.get("GITHUB_ACTIONS") == "true" else "[本地]"
+
     curated = build_curated(tag)
     sections = [build_section(label, prefix, tag) for label, prefix in STRATEGIES]
     body = curated + "\n\n" + "\n\n".join(sections)
-    title = f"{today} {title_prefix}"
+    title = f"{source_tag} {today} {title_prefix}"
 
     print(title)
     print(body)

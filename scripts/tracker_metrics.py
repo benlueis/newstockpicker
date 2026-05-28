@@ -7,7 +7,7 @@ from typing import Iterable
 
 import pandas as pd
 
-STRATEGY_PREFIXES = ("breakout", "dragon_leader", "sideways_breakout")
+STRATEGY_PREFIXES = ("breakout", "dragon_leader", "sideways_breakout", "pullback_ma5")
 
 
 def compute_returns(
@@ -66,7 +66,8 @@ def list_signal_dates(data_dir: Path) -> list[str]:
     扫描 data_dir 下的 {prefix}_{YYYYMMDD}.csv，返回三策略都存在的日期，
     格式 'YYYY-MM-DD'，按降序排列（最新在前）。
     """
-    pattern = re.compile(r"^(breakout|dragon_leader|sideways_breakout)_(\d{8})\.csv$")
+    prefixes = "|".join(STRATEGY_PREFIXES)
+    pattern = re.compile(rf"^({prefixes})_(\d{{8}})\.csv$")
     by_strategy: dict[str, set[str]] = {p: set() for p in STRATEGY_PREFIXES}
 
     for f in Path(data_dir).glob("*.csv"):

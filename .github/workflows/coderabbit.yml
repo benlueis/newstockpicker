@@ -1,0 +1,82 @@
+name: CodeRabbit Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  coderabbit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+
+      - name: Run linting
+        run: |
+          ruff check . --select=E,F,W --ignore=E501 || true
+          ruff format --check . || true
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short || true
+
+      - name: Run CodeRabbit AI Review
+        uses: coderabbitai/ai-pr-reviewer@latest
+        with:
+          debug: false
+          enable_server_side_review: true
+          reviews_per_run: 3
+          path_instructions: |
+            - strategies/: '策略模块 - 包含选股策略的核心逻辑，请重点审查策略逻辑的正确性和边界条件处理'
+            - scripts/: '脚本模块 - 包含扫描、缓存、通知等脚本，请重点审查错误处理和性能'
+            - config/: '配置模块 - 包含YAML配置加载器，请重点审查配置验证和安全性'
+            - backtest/: '回测模块 - 包含回测引擎和追踪器，请重点审查计算逻辑和数据处理'
+          instructions: |
+            这是一个中国A股选股系统，请用中文进行代码审查。
+            
+            重点审查:
+            1. 安全问题（API密钥、凭据）
+            2. 异常处理（避免静默吞掉异常）
+            3. 性能问题（数据库查询、数据处理）
+            4. 代码重复（DRY原则）
+            5. 依赖管理（版本固定、未使用依赖）
+            6. 测试覆盖率
+            
+            技术栈: Python 3.11+, pandas, numpy, Streamlit, Plotly, SQLite, Parquet
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CODERABBIT_API_KEY: ${{ secrets.CODERABBIT_API_KEY }}
+
+      - name: Upload linting report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linting-report
+          path: |
+            .ruff_cache/
+            *.log
+          retention-days: 7

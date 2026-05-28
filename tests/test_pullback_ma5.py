@@ -74,7 +74,7 @@ def make_uptrend_frame() -> pd.DataFrame:
         "open": round(ma5_last + 0.2, 2),
         "high": round(ma5_last + 0.4, 2),
         "low": round(ma5_last - 0.01, 2),  # 低开触及 MA5
-        "close": round(ma5_last + 0.05, 2),  # 收在 MA5 附近
+        "close": round(ma5_last + 0.15, 2),  # 收在 MA5 附近且有明显反弹
         "volume": 1200,  # 缩量
         "amount": MIN_AMOUNT,
         "pctChg": -0.3,

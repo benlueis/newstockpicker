@@ -6,9 +6,9 @@
     incremental_update(code) -> DataFrame
 
 数据源（环境变量 DATA_SOURCE）：
-    baostock  (默认) — baostock.com，免费但有延迟
+    tencent   (默认) — 腾讯行情 API，免费且实时
+    baostock  — baostock.com，免费但有延迟
     pytdx     — 直连通达信服务器，免费且实时
-    tencent   — 腾讯行情 API，免费且实时
 
 存储后端（环境变量 CACHE_BACKEND）：
     sqlite    (默认) — data/cache/stocks.db
@@ -22,7 +22,6 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import baostock as bs
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +34,7 @@ FIELDS = "date,open,high,low,close,volume,amount,turn,pctChg"
 NUMERIC_COLS = ["open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]
 
 BACKEND = os.environ.get("CACHE_BACKEND", "sqlite").lower()
-DATA_SOURCE = os.environ.get("DATA_SOURCE", "baostock").lower()
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "tencent").lower()
 
 # ── 通达信服务器列表（pytdx 用）─────────────────────
 TDX_SERVERS = [
@@ -50,7 +49,8 @@ TDX_SERVERS = [
 
 
 def _bs_fetch(code: str, start: str, end: str) -> pd.DataFrame:
-    """通过 baostock 拉取 K 线"""
+    """通过 baostock 拉取 K 线（懒加载 bs 模块）"""
+    import baostock as bs
     rs = bs.query_history_k_data_plus(
         code, FIELDS,
         start_date=start, end_date=end,
@@ -187,15 +187,25 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def _sqlite_batch_upsert(conn: sqlite3.Connection, code: str, df: pd.DataFrame) -> None:
-    rows = []
-    for _, r in df.iterrows():
-        rows.append((
-            code,
-            str(r["date"]),
-            float(r["open"]), float(r["high"]), float(r["low"]),
-            float(r["close"]), float(r["volume"]),
-            float(r.get("amount", 0)), float(r.get("turn", 0)), float(r.get("pctChg", 0)),
-        ))
+    """批量插入或更新 K 线数据到 SQLite"""
+    if df.empty:
+        return
+    
+    # 准备数据：添加 code 列并转换格式
+    df_insert = df.copy()
+    df_insert["code"] = code
+    df_insert["date"] = df_insert["date"].astype(str)
+    
+    # 确保所有数值列都是 float 类型
+    numeric_cols = ["open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]
+    for col in numeric_cols:
+        if col in df_insert.columns:
+            df_insert[col] = pd.to_numeric(df_insert[col], errors="coerce").fillna(0.0)
+    
+    # 选择需要的列并转换为元组列表
+    columns = ["code", "date", "open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]
+    rows = df_insert[columns].values.tolist()
+    
     conn.executemany(
         "INSERT OR REPLACE INTO kline VALUES (?,?,?,?,?,?,?,?,?,?)",
         rows,

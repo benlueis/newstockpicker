@@ -90,10 +90,12 @@ class TestListSignalDates(unittest.TestCase):
             (d / "dragon_leader_20260520.csv").write_text("代码,名称\n")
             (d / "sideways_breakout_20260519.csv").write_text("代码,名称\n")
             (d / "sideways_breakout_20260520.csv").write_text("代码,名称\n")
+            (d / "pullback_ma5_20260519.csv").write_text("代码,名称\n")
+            (d / "pullback_ma5_20260520.csv").write_text("代码,名称\n")
 
             from tracker_metrics import list_signal_dates
             dates = list_signal_dates(d)
-            # 三策略都有的只有 20260519
+            # 四策略都有的只有 20260519
             self.assertEqual(dates, ["2026-05-19"])
 
     def test_no_files_returns_empty(self):

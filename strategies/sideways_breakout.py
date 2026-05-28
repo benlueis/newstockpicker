@@ -5,39 +5,38 @@
 
 from __future__ import annotations
 
+import sys
 import pandas as pd
 
-from common import get_stock_data
+from common import get_stock_data, merge_params
 
 
 BUY_REASON = "横盘向上突破，放量确认"
 WAIT_ACTION = "WAIT"
 BUY_ACTION = "BUY"
 
-# ── 硬约束（高确定性）──────────────────────────
-LOOKBACK_DAYS = 120
-BOX_DAYS = 30
-MAX_BOX_RANGE = 1.12         # 箱体最高 / 最低
-MIN_BREAKOUT_PCT = 2.0       # 突破当日相对箱顶涨幅
-MIN_VOL_RATIO = 1.8          # 当日量 / 箱体期均量
-MAX_POSITION_120D = 0.75     # 箱顶在 120 日通道中的位置上限
-MAX_PCT_CHG = 9.5
-MIN_AMOUNT = 1e8
-MAX_UPPER_SHADOW_RATIO = 0.5
-MIN_ROWS = max(LOOKBACK_DAYS, BOX_DAYS + 1, 60)
+# ── 默认参数（YAML 缺失时的回退值）─────────────
+DEFAULT_PARAMS: dict = {
+    "lookback_days": 120,
+    "box_days": 30,
+    "max_box_range": 1.12,
+    "min_breakout_pct": 2.0,
+    "min_vol_ratio": 1.8,
+    "max_position_120d": 0.75,
+    "max_pct_chg": 9.5,
+    "min_amount": 1e8,
+    "max_upper_shadow_ratio": 0.5,
+    "min_rows": None,  # 运行时计算: max(lookback_days, box_days + 1, 60)
+}
 
 
-def check_sideways_breakout(
-    df: pd.DataFrame,
-    lookback_days: int = LOOKBACK_DAYS,
-    box_days: int = BOX_DAYS,
-    max_box_range: float = MAX_BOX_RANGE,
-    min_breakout_pct: float = MIN_BREAKOUT_PCT,
-    min_vol_ratio: float = MIN_VOL_RATIO,
-    max_position_120d: float = MAX_POSITION_120D,
-) -> dict:
+def check_sideways_breakout(df: pd.DataFrame, params: dict | None = None) -> dict:
     """判断是否满足横盘向上突破买入条件"""
-    if len(df) < MIN_ROWS:
+    p = merge_params(params, DEFAULT_PARAMS)
+
+    min_rows = p["min_rows"] or max(p["lookback_days"], p["box_days"] + 1, 60)
+
+    if len(df) < min_rows:
         return {"signal": False, "action": WAIT_ACTION, "reason": "数据不足"}
 
     close = df["close"]
@@ -45,17 +44,17 @@ def check_sideways_breakout(
     today = df.iloc[-1]
 
     # 一字板 / 涨停
-    if today["pctChg"] >= MAX_PCT_CHG:
+    if today["pctChg"] >= p["max_pct_chg"]:
         return {"signal": False, "action": WAIT_ACTION, "reason": "涨停或追高"}
     if today["high"] == today["low"]:
         return {"signal": False, "action": WAIT_ACTION, "reason": "一字板"}
 
     # 流动性
     today_amount = float(today["amount"]) if pd.notna(today.get("amount")) else 0.0
-    if today_amount < MIN_AMOUNT:
+    if today_amount < p["min_amount"]:
         return {"signal": False, "action": WAIT_ACTION, "reason": "成交额不足"}
 
-    window_120 = close.iloc[-lookback_days:]
+    window_120 = close.iloc[-p["lookback_days"]:]
     low_120 = window_120.min()
     high_120 = window_120.max()
     range_120 = high_120 - low_120
@@ -67,27 +66,27 @@ def check_sideways_breakout(
     ma60 = close.rolling(60).mean().iloc[-1]
     trend_ok = (today["close"] > ma20) and ((ma20 >= ma60 * 0.98) or (today["close"] > ma60))
 
-    box_close = close.iloc[-box_days - 1:-1]
+    box_close = close.iloc[-p["box_days"] - 1:-1]
     box_high = box_close.max()
     box_low = box_close.min()
     box_range = box_high / box_low if box_low > 0 else float("inf")
-    is_sideways = box_range <= max_box_range
+    is_sideways = box_range <= p["max_box_range"]
     base_position_120d = (box_high - low_120) / range_120
-    position_ok = base_position_120d <= max_position_120d
+    position_ok = base_position_120d <= p["max_position_120d"]
 
-    vol_ma = vol.iloc[-box_days - 1:-1].mean()
+    vol_ma = vol.iloc[-p["box_days"] - 1:-1].mean()
     vol_ratio = today["volume"] / vol_ma if vol_ma > 0 else 0
 
     breakout_pct = (today["close"] / box_high - 1) * 100 if box_high > 0 else 0
-    price_break = breakout_pct >= min_breakout_pct
-    vol_surge = vol_ratio >= min_vol_ratio
+    price_break = breakout_pct >= p["min_breakout_pct"]
+    vol_surge = vol_ratio >= p["min_vol_ratio"]
     up_candle = today["close"] > today["open"]
 
     bar_range = today["high"] - today["low"]
     upper_shadow_ratio = (
         (today["high"] - today["close"]) / bar_range if bar_range > 0 else 0
     )
-    no_long_upper = upper_shadow_ratio <= MAX_UPPER_SHADOW_RATIO
+    no_long_upper = upper_shadow_ratio <= p["max_upper_shadow_ratio"]
 
     signal = (
         position_ok
@@ -120,7 +119,7 @@ def check_sideways_breakout(
     }
 
 
-def scan_stocks(stock_list: list) -> pd.DataFrame:
+def scan_stocks(stock_list: list, params: dict | None = None) -> pd.DataFrame:
     """扫描股票列表，返回触发横盘向上突破买入提示的股票"""
     results = []
     total = len(stock_list)
@@ -131,11 +130,11 @@ def scan_stocks(stock_list: list) -> pd.DataFrame:
             df = get_stock_data(code, days=300)
             if df.empty:
                 continue
-            result = check_sideways_breakout(df)
+            result = check_sideways_breakout(df, params=params)
             if result["signal"]:
                 results.append({"代码": code, "名称": name, **result})
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"\n⚠️ {code} {name}: {e}", file=sys.stderr)
 
     print("\n扫描完成！")
     return pd.DataFrame(results)

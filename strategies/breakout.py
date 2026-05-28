@@ -5,25 +5,30 @@
 
 from __future__ import annotations
 
-import baostock as bs
+import sys
 import pandas as pd
 
-from common import get_stock_data
+from common import get_stock_data, merge_params
 
-# ── 硬约束（高确定性）──────────────────────────
-MAX_POSITION = 0.60          # 现价 / 250 日高点：必须真正低位
-MAX_BOX_RANGE = 0.10         # 箱体振幅 (high-low)/low，<=10%
-MIN_BREAKOUT_PCT = 3.0       # 突破当日涨幅
-MIN_VOL_RATIO = 1.5          # 当日量 / 箱体期均量
-MAX_PCT_CHG = 9.5            # 涨停板排除
-MIN_AMOUNT = 1e8             # 当日最小成交额（元）
-MAX_UPPER_SHADOW_RATIO = 0.5 # 上影 / 全振幅
-MIN_DATA_DAYS = 120
+# ── 默认参数（YAML 缺失时的回退值）─────────────
+DEFAULT_PARAMS: dict = {
+    "max_position": 0.60,              # 现价 / 250 日高点
+    "max_box_range": 0.10,             # 箱体振幅 (high-low)/low，<=10%
+    "min_breakout_pct": 3.0,           # 突破当日涨幅
+    "min_vol_ratio": 1.5,              # 当日量 / 箱体期均量
+    "max_pct_chg": 9.5,                # 涨停板排除
+    "min_amount": 1e8,                 # 当日最小成交额（元）
+    "max_upper_shadow_ratio": 0.5,     # 上影 / 全振幅
+    "min_data_days": 120,
+    "box_days": 20,                    # 横盘箱体天数
+}
 
 
-def check_breakout(df: pd.DataFrame, box_days: int = 20) -> dict:
+def check_breakout(df: pd.DataFrame, box_days: int = 20, params: dict | None = None) -> dict:
     """判断是否满足低位横盘突破条件"""
-    if len(df) < MIN_DATA_DAYS:
+    p = merge_params(params, DEFAULT_PARAMS)
+
+    if len(df) < p["min_data_days"]:
         return {"signal": False, "reason": "数据不足"}
 
     close = df["close"]
@@ -31,20 +36,20 @@ def check_breakout(df: pd.DataFrame, box_days: int = 20) -> dict:
     today = df.iloc[-1]
 
     # 一字板 / 涨停过滤
-    if today["pctChg"] >= MAX_PCT_CHG:
+    if today["pctChg"] >= p["max_pct_chg"]:
         return {"signal": False, "reason": "涨停或追高"}
     if today["high"] == today["low"]:
         return {"signal": False, "reason": "一字板"}
 
     # 流动性
     today_amount = float(today["amount"]) if pd.notna(today.get("amount")) else 0.0
-    if today_amount < MIN_AMOUNT:
+    if today_amount < p["min_amount"]:
         return {"signal": False, "reason": "成交额不足"}
 
     # ── 低位（核心约束）──────────────────────────
     high_250 = close.iloc[-min(250, len(df)):].max()
     position = close.iloc[-1] / high_250 if high_250 > 0 else 1.0
-    low_pos = position < MAX_POSITION
+    low_pos = position < p["max_position"]
     if not low_pos:
         return {"signal": False, "reason": "不在低位", "position": round(position, 3)}
 
@@ -52,13 +57,14 @@ def check_breakout(df: pd.DataFrame, box_days: int = 20) -> dict:
     below_ma20 = close.iloc[-1] < ma20 * 1.05
 
     # ── 横盘（振幅 + 缩量都要满足）────────────────
-    box_close = close.iloc[-box_days - 1:-1]
+    box_days_val = p.get("box_days", box_days)
+    box_close = close.iloc[-box_days_val - 1:-1]
     box_high = box_close.max()
     box_low = box_close.min()
     box_range = (box_high - box_low) / box_low if box_low > 0 else float("inf")
-    is_flat = box_range <= MAX_BOX_RANGE
+    is_flat = box_range <= p["max_box_range"]
 
-    vol_ma = vol.iloc[-box_days - 1:-1].mean()
+    vol_ma = vol.iloc[-box_days_val - 1:-1].mean()
     vol_shrink = vol.iloc[-5:-1].mean() < vol_ma * 0.85
 
     if not (is_flat and vol_shrink):
@@ -70,16 +76,16 @@ def check_breakout(df: pd.DataFrame, box_days: int = 20) -> dict:
 
     # ── 突破当日 ────────────────────────────────
     breakout_pct = (today["close"] / box_high - 1) * 100 if box_high > 0 else 0
-    price_break = today["close"] > box_high and breakout_pct >= MIN_BREAKOUT_PCT
+    price_break = today["close"] > box_high and breakout_pct >= p["min_breakout_pct"]
     vol_ratio = today["volume"] / vol_ma if vol_ma > 0 else 0
-    vol_surge = vol_ratio >= MIN_VOL_RATIO
+    vol_surge = vol_ratio >= p["min_vol_ratio"]
     up_candle = today["close"] > today["open"]
 
     bar_range = today["high"] - today["low"]
     upper_shadow_ratio = (
         (today["high"] - today["close"]) / bar_range if bar_range > 0 else 0
     )
-    no_long_upper = upper_shadow_ratio <= MAX_UPPER_SHADOW_RATIO
+    no_long_upper = upper_shadow_ratio <= p["max_upper_shadow_ratio"]
 
     signal = price_break and vol_surge and up_candle and no_long_upper
 
@@ -97,7 +103,7 @@ def check_breakout(df: pd.DataFrame, box_days: int = 20) -> dict:
     }
 
 
-def scan_stocks(stock_list: list) -> pd.DataFrame:
+def scan_stocks(stock_list: list, params: dict | None = None) -> pd.DataFrame:
     """扫描股票列表，返回触发信号的股票"""
     results = []
     total = len(stock_list)
@@ -108,18 +114,17 @@ def scan_stocks(stock_list: list) -> pd.DataFrame:
             df = get_stock_data(code, days=400)
             if df.empty:
                 continue
-            result = check_breakout(df)
+            result = check_breakout(df, params=params)
             if result["signal"]:
                 results.append({"代码": code, "名称": name, **result})
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"\n⚠️ {code} {name}: {e}", file=sys.stderr)
 
     print("\n扫描完成！")
     return pd.DataFrame(results)
 
 
 if __name__ == "__main__":
-    bs.login()
     test_stocks = [
         ("sh.600519", "贵州茅台"),
         ("sz.000001", "平安银行"),
@@ -136,4 +141,3 @@ if __name__ == "__main__":
     else:
         print("\n=== 触发突破信号的股票 ===")
         print(result_df.to_string(index=False))
-    bs.logout()

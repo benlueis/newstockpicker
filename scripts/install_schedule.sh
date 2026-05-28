@@ -18,7 +18,7 @@ LABEL_DAILY="com.stockpicker.daily-scan"
 chmod +x "$PROJECT_ROOT/scripts/run_daily_scan.sh"
 
 if [ -f "$PLIST_DAILY_SRC" ]; then
-  sed "s|/Users/xifeiyou/Documents/workspace/stock-picker|$PROJECT_ROOT|g" \
+  sed "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
     "$PLIST_DAILY_SRC" > "$PLIST_DAILY_DST"
 
   launchctl bootout "gui/$(id -u)/$LABEL_DAILY" 2>/dev/null || true
@@ -37,7 +37,7 @@ PLIST_AFTER_DST="$HOME/Library/LaunchAgents/com.stockpicker.afternoon-scan.plist
 LABEL_AFTER="com.stockpicker.afternoon-scan"
 
 if [ -f "$PLIST_AFTER_SRC" ]; then
-  sed "s|/Users/xifeiyou/Documents/workspace/newstockpicker|$PROJECT_ROOT|g" \
+  sed "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
     "$PLIST_AFTER_SRC" > "$PLIST_AFTER_DST"
 
   launchctl bootout "gui/$(id -u)/$LABEL_AFTER" 2>/dev/null || true

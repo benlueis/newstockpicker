@@ -1,0 +1,112 @@
+# CodeRabbit 配置文件
+# 文档: https://docs.coderabbit.ai/configuration/example
+
+language: zh-CN
+tone_instructions: '你是一位资深的 Python 开发者和代码审查专家，专注于金融量化系统。请用中文进行代码审查。'
+
+early_access: false
+
+reviews:
+  # 审查策略
+  profile: balanced  # 可选: strict, balanced, lenient
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  # 路径过滤
+  path_filters:
+    - '!data/cache/**'
+    - '!data/*.csv'
+    - '!data/reports/**'
+    - '!.github/**'
+    - '!*.md'
+    - '!*.txt'
+    - '!*.sh'
+
+  # 具体文件审查配置
+  specific_files:
+    - 'strategies/*.py'
+    - 'scripts/*.py'
+    - 'config/*.py'
+    - 'backtest/*.py'
+    - 'app.py'
+
+  # 重点审查内容
+  focus_area:
+    - '安全漏洞'
+    - '性能问题'
+    - '代码质量'
+    - '错误处理'
+    - '依赖管理'
+
+  # 路径上下文
+  path_context:
+    - 'strategies/': '策略模块 - 包含选股策略的核心逻辑'
+    - 'scripts/': '脚本模块 - 包含扫描、缓存、通知等脚本'
+    - 'config/': '配置模块 - 包含 YAML 配置加载器'
+    - 'backtest/': '回测模块 - 包含回测引擎和追踪器'
+
+  # 工具配置
+  tools:
+    ruff:
+      enabled: true
+      args: '--select=E,F,W --ignore=E501'
+    mypy:
+      enabled: false
+    pytest:
+      enabled: true
+    pyright:
+      enabled: false
+
+  # 学习功能
+  auto_increment: true
+
+  # 评论格式
+  collapse_file_summary: false
+  show_new_files: true
+
+  # 项目特定说明
+  instructions: |
+    这是一个中国A股选股系统，包含以下核心组件:
+    
+    1. **策略模块** (strategies/): 包含4个核心选股策略
+       - breakout.py: 低位横盘突破策略
+       - dragon_leader.py: 市场龙头策略
+       - sideways_breakout.py: 横盘向上突破策略
+       - pullback_ma5.py: 回踩5日线策略
+    
+    2. **脚本模块** (scripts/): 包含扫描、缓存、通知等脚本
+       - cache_manager.py: 数据缓存管理（SQLite/Parquet双后端）
+       - scan_runner.py: 通用扫描执行器
+       - notify.py: Bark推送通知
+    
+    3. **配置模块** (config/): 包含YAML配置加载器
+       - strategies.yaml: 策略参数配置
+       - pipeline.yaml: 管道配置
+    
+    4. **回测模块** (backtest/): 包含回测引擎和追踪器
+    
+    5. **Web界面** (app.py): Streamlit单页应用
+    
+    **代码审查重点:**
+    - 安全问题（特别是API密钥和凭据）
+    - 异常处理（避免静默吞掉异常）
+    - 性能问题（数据库查询、数据处理）
+    - 代码重复（DRY原则）
+    - 依赖管理（版本固定、未使用依赖）
+    - 测试覆盖率
+    
+    **技术栈:**
+    - Python 3.11+
+    - pandas, numpy
+    - Streamlit, Plotly
+    - SQLite, Parquet
+    - GitHub Actions CI/CD
+    
+    **注意事项:**
+    - 所有策略文件使用相同的_merge_params()函数，应考虑提取到common.py
+    - 异常处理过于宽泛，应记录日志而非静默继续
+    - 配置加载器使用pyyaml但未在requirements.txt中列出
+    - 缺少__init__.py文件，依赖sys.path.insert() hack

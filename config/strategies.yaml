@@ -1,0 +1,158 @@
+# 策略参数配置文件
+# 每个策略支持多套参数预设：tight/loose/default
+
+breakout:
+  # 低位横盘突破策略参数（与 breakout.py 的 DEFAULT_PARAMS 一致）
+  default:
+    max_position: 0.60          # 现价 / 250 日高点：必须真正低位
+    max_box_range: 0.10         # 箱体振幅 (high-low)/low，<=10%
+    min_breakout_pct: 3.0       # 突破当日涨幅
+    min_vol_ratio: 1.5          # 当日量 / 箱体期均量
+    max_pct_chg: 9.5            # 涨停板排除
+    min_amount: 100000000       # 当日最小成交额（元）
+    max_upper_shadow_ratio: 0.5 # 上影 / 全振幅
+    min_data_days: 120
+    box_days: 20                # 横盘箱体天数
+  tight:
+    max_position: 0.50          # 更严格的低位要求
+    max_box_range: 0.08         # 更严格的横盘要求
+    min_breakout_pct: 4.0       # 更高的突破涨幅要求
+    min_vol_ratio: 2.0          # 更高的量比要求
+    max_pct_chg: 9.0            # 更严格的涨停过滤
+    min_amount: 150000000       # 更高的成交额要求
+    max_upper_shadow_ratio: 0.4 # 更严格的上影要求
+    min_data_days: 120
+    box_days: 20
+  loose:
+    max_position: 0.70          # 放宽的低位要求
+    max_box_range: 0.15         # 放宽的横盘要求
+    min_breakout_pct: 2.0       # 降低的突破涨幅要求
+    min_vol_ratio: 1.2          # 降低的量比要求
+    max_pct_chg: 9.8            # 放宽的涨停过滤
+    min_amount: 80000000        # 降低的成交额要求
+    max_upper_shadow_ratio: 0.6 # 放宽的上影要求
+    min_data_days: 100          # 降低的数据天数要求
+    box_days: 15                # 减少的横盘箱体天数
+
+dragon_leader:
+  # 市场龙头策略参数（与 dragon_leader.py 的 DEFAULT_PARAMS 一致）
+  default:
+    min_position: 0.85          # 现价 / 250 日高点
+    min_ret_20d: 8.0            # 20 日涨幅 %
+    max_ret_20d: 70.0           # 过热保护：20 日涨幅上限
+    max_ret_5d: 25.0            # 过热保护：5 日涨幅上限
+    min_rs_20d: 3.0             # 相对沪深 300 超额 %
+    min_vol_ratio: 1.2          # 5 日均量 / 20 日均量
+    min_pct_chg: 1.0            # 龙头当日应是上涨的
+    max_pct_chg: 9.5            # 排除涨停
+    min_amount: 200000000       # 龙头流动性门槛：2 亿
+    top_market: 20
+    top_per_industry: 1
+    min_leader_score: 65.0
+  tight:
+    min_position: 0.90          # 更严格的位置要求
+    min_ret_20d: 10.0           # 更高的20日涨幅要求
+    max_ret_20d: 60.0           # 更严格的过热保护
+    max_ret_5d: 20.0            # 更严格的5日涨幅上限
+    min_rs_20d: 5.0             # 更高的相对强度要求
+    min_vol_ratio: 1.5          # 更高的量比要求
+    min_pct_chg: 2.0            # 更高的当日涨幅要求
+    max_pct_chg: 9.0            # 更严格的涨停排除
+    min_amount: 300000000       # 更高的流动性门槛
+    top_market: 15              # 更少的市场龙头名额
+    top_per_industry: 1
+    min_leader_score: 70.0      # 更高的龙头得分门槛
+  loose:
+    min_position: 0.80          # 放宽的位置要求
+    min_ret_20d: 6.0            # 降低的20日涨幅要求
+    max_ret_20d: 80.0           # 放宽的过热保护
+    max_ret_5d: 30.0            # 放宽的5日涨幅上限
+    min_rs_20d: 2.0             # 降低的相对强度要求
+    min_vol_ratio: 1.0          # 降低的量比要求
+    min_pct_chg: 0.5            # 降低的当日涨幅要求
+    max_pct_chg: 9.8            # 放宽的涨停排除
+    min_amount: 150000000       # 降低的流动性门槛
+    top_market: 25              # 更多的市场龙头名额
+    top_per_industry: 1
+    min_leader_score: 60.0      # 降低的龙头得分门槛
+
+sideways_breakout:
+  # 横盘向上突破策略参数（与 sideways_breakout.py 的 DEFAULT_PARAMS 一致）
+  default:
+    lookback_days: 120
+    box_days: 30
+    max_box_range: 1.12         # 箱体最高 / 最低
+    min_breakout_pct: 2.0       # 突破当日相对箱顶涨幅
+    min_vol_ratio: 1.8          # 当日量 / 箱体期均量
+    max_position_120d: 0.75     # 箱顶在 120 日通道中的位置上限
+    max_pct_chg: 9.5
+    min_amount: 100000000
+    max_upper_shadow_ratio: 0.5
+    min_rows: 150               # 计算得出: max(lookback_days, box_days + 1, 60)
+  tight:
+    lookback_days: 100
+    box_days: 25
+    max_box_range: 1.10         # 更严格的横盘要求
+    min_breakout_pct: 2.5       # 更高的突破涨幅要求
+    min_vol_ratio: 2.0          # 更高的量比要求
+    max_position_120d: 0.70     # 更严格的位置要求
+    max_pct_chg: 9.0            # 更严格的涨停过滤
+    min_amount: 150000000       # 更高的成交额要求
+    max_upper_shadow_ratio: 0.4 # 更严格的上影要求
+    min_rows: 130
+  loose:
+    lookback_days: 140
+    box_days: 35
+    max_box_range: 1.15         # 放宽的横盘要求
+    min_breakout_pct: 1.5       # 降低的突破涨幅要求
+    min_vol_ratio: 1.5          # 降低的量比要求
+    max_position_120d: 0.80     # 放宽的位置要求
+    max_pct_chg: 9.8            # 放宽的涨停过滤
+    min_amount: 80000000        # 降低的成交额要求
+    max_upper_shadow_ratio: 0.6 # 放宽的上影要求
+    min_rows: 175
+
+pullback_ma5:
+  # 回踩5日线策略参数（与 pullback_ma5.py 的 DEFAULT_PARAMS 一致）
+  default:
+    min_data_days: 60           # 最少需要 60 日数据
+    min_amount: 80000000        # 当日最低成交额 8000万
+    max_pct_chg: 9.5            # 涨停排除
+    min_pct_chg: -9.5           # 跌停排除
+    trend_confirm_days: 8       # 回看天数确认趋势
+    min_days_above_ma5: 5       # 过去N日中至少M天收盘在MA5之上
+    min_recent_gain: 0.10       # 近20日涨幅至少10%
+    max_close_above_ma5_pct: 1.5  # 收盘最多高于MA5的百分比
+    min_close_below_ma5_pct: -1.5 # 收盘最多低于MA5的百分比
+    min_low_touch_ma5_ratio: 0.995 # 最低价不低于MA5的比例
+    max_vol_ratio: 1.2          # 当日量/5日均量上限
+    min_rebound_ratio: 0.3      # 收盘反弹幅度
+    max_recent_drop: -7.0       # 近10日单日最大跌幅
+  tight:
+    min_data_days: 60
+    min_amount: 80000000
+    max_pct_chg: 9.5
+    min_pct_chg: -9.5
+    trend_confirm_days: 8
+    min_days_above_ma5: 6       # 原 5
+    min_recent_gain: 0.10
+    max_close_above_ma5_pct: 1.0   # 原 1.5
+    min_close_below_ma5_pct: -1.0  # 原 -1.5
+    min_low_touch_ma5_ratio: 0.998 # 原 0.995
+    max_vol_ratio: 0.85            # 原 1.2（必须明显缩量）
+    min_rebound_ratio: 0.5         # 原 0.3（必须从低点明显反弹）
+    max_recent_drop: -5.0          # 原 -7.0
+  loose:
+    min_data_days: 40
+    min_amount: 50000000
+    max_pct_chg: 9.8
+    min_pct_chg: -9.8
+    trend_confirm_days: 6
+    min_days_above_ma5: 4
+    min_recent_gain: 0.05
+    max_close_above_ma5_pct: 2.0
+    min_close_below_ma5_pct: -2.0
+    min_low_touch_ma5_ratio: 0.990
+    max_vol_ratio: 1.5
+    min_rebound_ratio: 0.2
+    max_recent_drop: -9.0

@@ -92,7 +92,7 @@ def main() -> int:
     db_size = DB_PATH.stat().st_size / 1024 / 1024
     conn2.close()
 
-    print(f"\n完成！")
+    print("\n完成！")
     print(f"  股票数: {total_stocks}")
     print(f"  总行数: {total_rows:,}")
     print(f"  数据库: ~{db_size:.1f} MB")

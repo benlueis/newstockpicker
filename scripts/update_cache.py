@@ -1,4 +1,4 @@
-"""每日缓存增量更新入口（进程池并发，避开 baostock 非线程安全）。"""
+"""每日缓存增量更新入口（进程池并发，腾讯数据源）。"""
 from __future__ import annotations
 
 import sys
@@ -12,11 +12,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 STOCK_LIST = ROOT / "data" / "stock_list.csv"
 WORKERS = 6
-
-
-def _init_worker() -> None:
-    import baostock as bs
-    bs.login()
 
 
 def _update_one(code: str) -> tuple[str, bool]:
@@ -40,7 +35,7 @@ def main() -> int:
 
     done = 0
     failed = 0
-    with ProcessPoolExecutor(max_workers=WORKERS, initializer=_init_worker) as pool:
+    with ProcessPoolExecutor(max_workers=WORKERS) as pool:
         futures = {pool.submit(_update_one, c): c for c in codes}
         for fut in as_completed(futures):
             _, ok = fut.result()

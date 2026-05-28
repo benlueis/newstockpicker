@@ -7,213 +7,115 @@
   一只股票同时触发两个策略时额外加分，置信度最高。
 
 要求数据源为实时源（tencent / pytdx），否则无法拿到当日盘中数据。
+
+v2: 不再内联策略逻辑，改为调用 breakout / pullback_ma5 原函数 + tightened params。
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pandas as pd
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "config"))
+
 from common import get_stock_data
-
-# ============================================================
-#  低位横盘突破 — 收紧参数
-# ============================================================
-BT_MAX_POSITION = 0.60          # 现价 / 250 日高点 <= 60%
-BT_MAX_BOX_RANGE = 0.08         # 箱体振幅 <= 8%（原 10%）
-BT_MIN_BREAKOUT_PCT = 4.0       # 突破当日涨幅 >= 4%（原 3%）
-BT_MIN_VOL_RATIO = 2.0          # 量比 >= 2.0（原 1.5）
-BT_MAX_PCT_CHG = 9.5            # 排除涨停
-BT_MIN_AMOUNT = 1e8             # 成交额 >= 1 亿
-BT_MAX_UPPER_SHADOW = 0.30      # 上影 / 全振幅 <= 30%（原 50%）
-BT_MIN_DATA_DAYS = 120
-BT_BOX_DAYS = 20
+from breakout import check_breakout
+from pullback_ma5 import check_pullback_ma5
 
 
-def check_breakout_1450(df: pd.DataFrame) -> dict:
-    """收紧版低位横盘突破判断"""
-    if len(df) < BT_MIN_DATA_DAYS:
-        return {"signal": False, "reason": "数据不足"}
+# ── 尾盘收紧参数（从 YAML 加载，缺失时回退到内置值）──────
+def _load_tight_params():
+    """尝试从 config/strategies.yaml 加载 tight 预设，失败则用内置值"""
+    try:
+        from loader import get_strategy_params
+        bt_tight = get_strategy_params("breakout", "tight") or {}
+        pt_tight = get_strategy_params("pullback_ma5", "tight") or {}
+        if bt_tight and pt_tight:
+            return bt_tight, pt_tight
+    except Exception:
+        pass
 
-    close = df["close"]
-    vol = df["volume"]
-    today = df.iloc[-1]
-
-    if today["pctChg"] >= BT_MAX_PCT_CHG:
-        return {"signal": False, "reason": "涨停"}
-    if today["high"] == today["low"]:
-        return {"signal": False, "reason": "一字板"}
-
-    today_amount = float(today["amount"]) if pd.notna(today.get("amount")) else 0.0
-    if today_amount < BT_MIN_AMOUNT:
-        return {"signal": False, "reason": "成交额不足"}
-
-    high_250 = close.iloc[-min(250, len(df)):].max()
-    position = close.iloc[-1] / high_250 if high_250 > 0 else 1.0
-    if position >= BT_MAX_POSITION:
-        return {"signal": False, "reason": "不在低位", "position": round(position, 3)}
-
-    box_close = close.iloc[-BT_BOX_DAYS - 1:-1]
-    box_high = box_close.max()
-    box_low = box_close.min()
-    box_range = (box_high - box_low) / box_low if box_low > 0 else float("inf")
-    if box_range > BT_MAX_BOX_RANGE:
-        return {"signal": False, "reason": "箱体太宽", "box_range": round(box_range, 3)}
-
-    vol_ma = vol.iloc[-BT_BOX_DAYS - 1:-1].mean()
-    vol_5d_avg = vol.iloc[-5:-1].mean()
-    if vol_5d_avg >= vol_ma * 0.85:
-        return {"signal": False, "reason": "箱体期未缩量"}
-
-    breakout_pct = (today["close"] / box_high - 1) * 100 if box_high > 0 else 0
-    if not (today["close"] > box_high and breakout_pct >= BT_MIN_BREAKOUT_PCT):
-        return {"signal": False, "reason": "突破幅度不足", "breakout_pct": round(breakout_pct, 2)}
-
-    vol_ratio = today["volume"] / vol_ma if vol_ma > 0 else 0
-    if vol_ratio < BT_MIN_VOL_RATIO:
-        return {"signal": False, "reason": "放量不足", "vol_ratio": round(vol_ratio, 2)}
-
-    if today["close"] <= today["open"]:
-        return {"signal": False, "reason": "非阳线"}
-
-    bar_range = today["high"] - today["low"]
-    upper_shadow = (today["high"] - today["close"]) / bar_range if bar_range > 0 else 0
-    if upper_shadow > BT_MAX_UPPER_SHADOW:
-        return {"signal": False, "reason": "上影线过长", "upper_shadow": round(upper_shadow, 2)}
-
-    # ── 单项得分 0-100 ────────────────────────
-    score = 0.0
-    score += min(max((breakout_pct - BT_MIN_BREAKOUT_PCT) / 6 * 40, 0), 40)
-    score += min(max((vol_ratio - BT_MIN_VOL_RATIO) / 2 * 25, 0), 25)
-    score += max((BT_MAX_POSITION - position) / 0.3 * 15, 0)
-    score += max(10 - upper_shadow / BT_MAX_UPPER_SHADOW * 10, 0)
-    score += max((BT_MAX_BOX_RANGE - box_range) / BT_MAX_BOX_RANGE * 10, 0)
-
-    return {
-        "signal": True,
-        "reason": "14:45低位突破",
-        "score_bt": round(min(score, 100), 1),
-        "position": round(position, 3),
-        "box_range": round(box_range, 3),
-        "breakout_pct": round(breakout_pct, 2),
-        "vol_ratio": round(vol_ratio, 2),
-        "pct_chg": round(float(today["pctChg"]), 2),
-        "amount_yi": round(today_amount / 1e8, 2),
-        "upper_shadow": round(upper_shadow, 2),
+    # 内置回退值（与 YAML 中 tight 预设一致）
+    bt_tight = {
+        "max_position": 0.50,
+        "max_box_range": 0.08,
+        "min_breakout_pct": 4.0,
+        "min_vol_ratio": 2.0,
+        "max_pct_chg": 9.0,
+        "min_amount": 150000000,
+        "max_upper_shadow_ratio": 0.4,
+        "min_data_days": 120,
+        "box_days": 20,
     }
+    pt_tight = {
+        "min_data_days": 60,
+        "min_amount": 8e7,
+        "max_pct_chg": 9.5,
+        "min_pct_chg": -9.5,
+        "trend_confirm_days": 8,
+        "min_days_above_ma5": 6,
+        "min_recent_gain": 0.10,
+        "max_close_above_ma5_pct": 1.0,
+        "min_close_below_ma5_pct": -1.0,
+        "min_low_touch_ma5_ratio": 0.998,
+        "max_vol_ratio": 0.85,
+        "min_rebound_ratio": 0.5,
+        "max_recent_drop": -5.0,
+    }
+    return bt_tight, pt_tight
+
+
+TIGHT_BT, TIGHT_PT = _load_tight_params()
+
+# ── 参数别名映射：YAML key → afternoon 内部名称 ────
+# breakout 参数使用大写 key（与 YAML/breakout 模块一致）
+_BT = TIGHT_BT
+# pullback 参数使用小写 key（与 pullback_ma5 DEFAULT_PARAMS 一致）
+_PT = TIGHT_PT
 
 
 # ============================================================
-#  回踩 5 日线企稳 — 收紧参数
+#  收紧版评分（从返回值计算得分，替代内联逻辑）
 # ============================================================
-PT_MIN_DATA_DAYS = 60
-PT_MIN_AMOUNT = 8e7
-PT_MAX_PCT_CHG = 9.5
-PT_MIN_PCT_CHG = -9.5
-PT_TREND_CONFIRM_DAYS = 8
-PT_MIN_DAYS_ABOVE_MA5 = 6           # 原 5
-PT_MIN_RECENT_GAIN = 0.10           # 近 20 日涨幅 ≥ 10%
-PT_MAX_CLOSE_ABOVE_MA5_PCT = 1.0    # 原 1.5
-PT_MIN_CLOSE_BELOW_MA5_PCT = -1.0   # 原 -1.5
-PT_MIN_LOW_TOUCH_MA5_RATIO = 0.998  # 原 0.995
-PT_MAX_VOL_RATIO = 0.85             # 原 1.2（必须明显缩量）
-PT_MIN_REBOUND_RATIO = 0.5          # 原 0.3（必须从低点明显反弹）
-PT_MAX_RECENT_DROP = -5.0           # 原 -7.0
 
-
-def check_pullback_1450(df: pd.DataFrame) -> dict:
-    """收紧版回踩 5 日线判断"""
-    if len(df) < PT_MIN_DATA_DAYS:
-        return {"signal": False, "reason": "数据不足"}
-
-    close = df["close"]
-    vol = df["volume"]
-    today = df.iloc[-1]
-
-    if today["pctChg"] >= PT_MAX_PCT_CHG:
-        return {"signal": False, "reason": "涨停"}
-    if today["pctChg"] <= PT_MIN_PCT_CHG:
-        return {"signal": False, "reason": "跌停"}
-    if today["high"] == today["low"]:
-        return {"signal": False, "reason": "一字板"}
-
-    today_amount = float(today["amount"]) if pd.notna(today.get("amount")) else 0.0
-    if today_amount < PT_MIN_AMOUNT:
-        return {"signal": False, "reason": "成交额不足"}
-
-    ma5 = close.rolling(5).mean()
-    ma10 = close.rolling(10).mean()
-    ma20 = close.rolling(20).mean()
-
-    ma5_today = ma5.iloc[-1]
-    ma10_today = ma10.iloc[-1]
-    ma20_today = ma20.iloc[-1]
-
-    if pd.isna(ma5_today) or pd.isna(ma10_today) or pd.isna(ma20_today):
-        return {"signal": False, "reason": "均线数据不足"}
-
-    today_close = float(close.iloc[-1])
-    today_low = float(today["low"])
-    today_high = float(today["high"])
-
-    trend_golden = ma5_today > ma10_today > ma20_today
-    above_ma20 = today_close > ma20_today
-    ma5_slope_up = ma5.iloc[-1] > ma5.iloc[-2] if len(df) >= 6 else True
-
-    recent_above = int(
-        (close.iloc[-PT_TREND_CONFIRM_DAYS:-1] > ma5.iloc[-PT_TREND_CONFIRM_DAYS:-1]).sum()
-    )
-    was_above_ma5 = recent_above >= PT_MIN_DAYS_ABOVE_MA5
-    recent_gain = (close.iloc[-1] / close.iloc[-20] - 1) >= PT_MIN_RECENT_GAIN
-
-    if not (trend_golden and above_ma20 and ma5_slope_up and was_above_ma5 and recent_gain):
-        return {"signal": False, "reason": "未确认上升趋势"}
-
-    max_drop = df["pctChg"].iloc[-10:].min()
-    if max_drop <= PT_MAX_RECENT_DROP:
-        return {"signal": False, "reason": f"近10日有大阴线({round(max_drop,1)}%)"}
-
-    close_ma5_pct = (today_close / ma5_today - 1) * 100
-    low_touched_ma5 = today_low <= ma5_today
-    low_not_too_deep = today_low >= ma5_today * PT_MIN_LOW_TOUCH_MA5_RATIO
-    close_near_ma5 = PT_MIN_CLOSE_BELOW_MA5_PCT <= close_ma5_pct <= PT_MAX_CLOSE_ABOVE_MA5_PCT
-
-    candle_range = today_high - today_low
-    rebound_ratio = (today_close - today_low) / candle_range if candle_range > 0 else 0
-    rebound_ok = rebound_ratio >= PT_MIN_REBOUND_RATIO
-
-    if not (low_touched_ma5 and low_not_too_deep and close_near_ma5 and rebound_ok):
-        return {"signal": False, "reason": "未满足回踩条件"}
-
-    vol_ma5 = vol.iloc[-6:-1].mean()
-    vol_ratio = float(today["volume"]) / vol_ma5 if vol_ma5 > 0 else 0
-    if vol_ratio > PT_MAX_VOL_RATIO:
-        return {"signal": False, "reason": "未缩量", "vol_ratio": round(vol_ratio, 2)}
-
-    # ── 单项得分 0-100 ────────────────────────
+def _score_breakout_tight(r: dict) -> float:
+    """对 breakout 返回结果计算收紧版得分 0-100"""
     score = 0.0
-    score += min(max((rebound_ratio - PT_MIN_REBOUND_RATIO) / 0.5 * 30, 0), 30)
-    score += max((PT_MAX_VOL_RATIO - vol_ratio) / PT_MAX_VOL_RATIO * 25, 0)
-    recent_gain_pct = (close.iloc[-1] / close.iloc[-20] - 1) * 100
-    score += min(max(recent_gain_pct - PT_MIN_RECENT_GAIN * 100, 0) / 20 * 20, 20)
-    score += min(max(recent_above - PT_MIN_DAYS_ABOVE_MA5, 0) / 2 * 15, 15)
+    breakout_pct = r.get("breakout_pct", 0)
+    vol_ratio = r.get("vol_ratio", 0)
+    position = r.get("position", 1.0)
+    upper_shadow = r.get("upper_shadow", 0)
+    box_range = r.get("box_range", 0)
+
+    score += min(max((breakout_pct - _BT["min_breakout_pct"]) / 6 * 40, 0), 40)
+    score += min(max((vol_ratio - _BT["min_vol_ratio"]) / 2 * 25, 0), 25)
+    score += max((_BT["max_position"] - position) / 0.3 * 15, 0)
+    score += max(10 - upper_shadow / _BT["max_upper_shadow_ratio"] * 10, 0)
+    score += max((_BT["max_box_range"] - box_range) / _BT["max_box_range"] * 10, 0)
+    return round(min(score, 100), 1)
+
+
+def _score_pullback_tight(r: dict) -> float:
+    """对 pullback_ma5 返回结果计算收紧版得分 0-100"""
+    score = 0.0
+    rebound_ratio = r.get("rebound_ratio", 0)
+    vol_ratio = r.get("vol_ratio", 0)
+    recent_gain_pct = r.get("recent_gain_pct", 0)
+    days_above_ma5 = r.get("days_above_ma5", 0)
+    close_ma5_pct = r.get("close_ma5_pct", 0)
+
+    score += min(max((rebound_ratio - _PT["min_rebound_ratio"]) / 0.5 * 30, 0), 30)
+    score += max((_PT["max_vol_ratio"] - vol_ratio) / _PT["max_vol_ratio"] * 25, 0)
+    score += min(max(recent_gain_pct - _PT["min_recent_gain"] * 100, 0) / 20 * 20, 20)
+    score += min(max(days_above_ma5 - _PT["min_days_above_ma5"], 0) / 2 * 15, 15)
     ma5_proximity = 1.0 - abs(close_ma5_pct) / max(
-        abs(PT_MAX_CLOSE_ABOVE_MA5_PCT), abs(PT_MIN_CLOSE_BELOW_MA5_PCT)
+        abs(_PT["max_close_above_ma5_pct"]), abs(_PT["min_close_below_ma5_pct"])
     )
     score += max(ma5_proximity * 10, 0)
-
-    return {
-        "signal": True,
-        "reason": "14:45回踩企稳",
-        "score_pt": round(min(score, 100), 1),
-        "close_ma5_pct": round(close_ma5_pct, 2),
-        "rebound_ratio": round(rebound_ratio, 2),
-        "vol_ratio": round(vol_ratio, 2),
-        "ma5": round(ma5_today, 2),
-        "pct_chg": round(float(today["pctChg"]), 2),
-        "amount_yi": round(today_amount / 1e8, 2),
-        "recent_gain_pct": round(recent_gain_pct, 2),
-        "days_above_ma5": recent_above,
-    }
+    return round(min(score, 100), 1)
 
 
 # ============================================================
@@ -259,9 +161,9 @@ def _score_loose_breakout(r: dict) -> float:
     score = 0.0
     vol = r.get("vol_ratio", 1.0)
     pct = r.get("breakout_pct", 0.0)
-    score += min(vol * 10, 30)        # 量比贡献
-    score += min(pct * 3, 20)         # 突破幅度贡献
-    score += min(r.get("box_range", 0.1) * 100, 10)  # 箱体够紧
+    score += min(vol * 10, 30)
+    score += min(pct * 3, 20)
+    score += min(r.get("box_range", 0.1) * 100, 10)
     return round(score, 1)
 
 
@@ -270,10 +172,10 @@ def _score_loose_pullback(r: dict) -> float:
     score = 0.0
     vol = r.get("vol_ratio", 1.0)
     rebound = r.get("rebound_ratio", 0.0)
-    score += max(15 - vol * 10, 0)     # 缩量贡献（越小越好）
-    score += min(rebound * 35, 25)     # 反弹贡献
+    score += max(15 - vol * 10, 0)
+    score += min(rebound * 35, 25)
     gain = r.get("recent_gain_pct", 0.0)
-    score += min(max(gain - 5, 0), 20)  # 趋势强度
+    score += min(max(gain - 5, 0), 20)
     return round(score, 1)
 
 
@@ -300,14 +202,19 @@ def scan_stocks(
             df = get_stock_data(code, days=400)
             if df.empty:
                 continue
-            bt = check_breakout_1450(df)
+
+            # 调用原策略 + tightened params
+            bt = check_breakout(df, params=TIGHT_BT)
             if bt["signal"]:
+                bt["score_bt"] = _score_breakout_tight(bt)
                 tight_breakout.append({"代码": code, "名称": name, **bt})
-            pt = check_pullback_1450(df)
+
+            pt = check_pullback_ma5(df, params=TIGHT_PT)
             if pt["signal"]:
+                pt["score_pt"] = _score_pullback_tight(pt)
                 tight_pullback.append({"代码": code, "名称": name, **pt})
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"\n⚠️ {code} {name}: {e}", file=sys.stderr)
 
     tight_total = len(tight_breakout) + len(tight_pullback)
     print(f"\n[tight]  扫描完成 → 突破 {len(tight_breakout)} | 回踩 {len(tight_pullback)}")
@@ -318,9 +225,6 @@ def scan_stocks(
     if tight_total < fallback_threshold:
         print(f"[loose] tight 仅 {tight_total} 只 (阈值 {fallback_threshold})，降级到原版参数...")
 
-        from breakout import check_breakout  # noqa: E402
-        from pullback_ma5 import check_pullback_ma5  # noqa: E402
-
         loose_breakout: list[dict] = []
         loose_pullback: list[dict] = []
 
@@ -330,14 +234,16 @@ def scan_stocks(
                 df = get_stock_data(code, days=400)
                 if df.empty:
                     continue
-                bt = check_breakout(df)
+
+                bt = check_breakout(df)  # 不传 params，使用默认值
                 if bt["signal"]:
                     loose_breakout.append({"代码": code, "名称": name, **bt})
-                pt = check_pullback_ma5(df)
+
+                pt = check_pullback_ma5(df)  # 不传 params
                 if pt["signal"]:
                     loose_pullback.append({"代码": code, "名称": name, **pt})
-            except Exception:
-                continue
+            except Exception as e:
+                print(f"\n⚠️ {code} {name}: {e}", file=sys.stderr)
 
         bt_codes = {r["代码"] for r in loose_breakout}
         pt_codes = {r["代码"] for r in loose_pullback}
@@ -389,7 +295,7 @@ def scan_stocks(
     # ── 汇总 ────────────────────────────────────
     tight_count = sum(1 for r in top if r.get("tier") == "tight")
     loose_count = sum(1 for r in top if r.get("tier") == "loose")
-    print(f"\n=== 14:45 尾盘精选 ===")
+    print("\n=== 14:45 尾盘精选 ===")
     print(f"tight {tight_total} 只 | loose 降级补充 | 推送 Top {min(top_n, len(top))}")
     print(f"  tight: {tight_count}  loose: {loose_count}")
 

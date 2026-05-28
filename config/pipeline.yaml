@@ -1,0 +1,46 @@
+# 管道全局配置文件
+# 包含影响整个扫描管道的全局设置
+
+general:
+  # 一般管道设置
+  max_workers: 4                  # 并行处理的最大工作进程数（用于午后扫描）
+  retry_attempts: 3               # 失败时的重试次数
+  retry_delay: 5                  # 重试间隔（秒）
+  timeout: 300                    # 单个操作超时时间（秒）
+  enable_logging: true            # 是否启用详细日志
+  log_level: INFO                 # 日志级别: DEBUG, INFO, WARNING, ERROR
+
+data:
+  # 数据相关配置
+  cache_dir: ./data               # 缓存目录
+  reports_dir: ./data/reports     # 报告目录
+  industry_map_file: ./data/industry_map.csv  # 行业映射文件
+  stock_list_file: ./data/stock_list.csv      # 股票列表文件
+  min_cache_age_hours: 1          # 缓存最小更新间隔（小时）
+  max_cache_age_hours: 24         # 缓存最大有效时间（小时）
+
+notifications:
+  # 通知设置
+  bark_url: ""                    # Bark推送URL（如果为空则不推送）
+  bark_group: "StockPicker"       # Bark推送分组
+  bark_icon: "https://example.com/icon.png"  # Bark推送图标
+  enable_bark: false              # 是否启用Bark通知
+  notify_on_complete: true        # 管道完成时是否通知
+  notify_on_error: true           # 管道出错时是否通知
+
+backtest:
+  # 回测引擎配置
+  initial_capital: 100000         # 初始资金（元）
+  commission_rate: 0.0003         # 佣金率（0.03%）
+  stamp_tax_rate: 0.001           # 印花税率（0.1%）
+  slippage: 0.001                 # 滑点（0.1%）
+  benchmark_index: "sh.000300"    # 基准指数（沪深300）
+  risk_free_rate: 0.03            # 无风险利率（3%年化，用于夏普比率计算）
+
+scanning:
+  # 扫描相关配置
+  batch_size: 50                  # 每批处理的股票数量
+  progress_update_interval: 10    # 进度更新间隔（股票数量）
+  max_days_history: 400           # 获取历史数据的最大天数
+  min_trading_days: 120           # 最小交易天数要求
+  default_horizon: 5              # 默认胜率统计天数（T+N）

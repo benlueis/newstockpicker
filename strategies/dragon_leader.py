@@ -13,28 +13,30 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pandas as pd
 
-from common import get_index_data, get_stock_data, load_industry_map
+from common import get_index_data, get_stock_data, load_industry_map, merge_params
 
-# ── 硬过滤 ──────────────────────────────────
-MIN_POSITION = 0.85          # 现价 / 250 日高点
-MIN_RET_20D = 8.0            # 20 日涨幅 %
-MAX_RET_20D = 70.0           # 过热保护：20 日涨幅上限
-MAX_RET_5D = 25.0            # 过热保护：5 日涨幅上限
-MIN_RS_20D = 3.0             # 相对沪深 300 超额 %
-MIN_VOL_RATIO = 1.2          # 5 日均量 / 20 日均量
-MIN_PCT_CHG = 1.0            # 龙头当日应是上涨的
-MAX_PCT_CHG = 9.5            # 排除涨停
-MIN_AMOUNT = 2e8             # 龙头流动性门槛：2 亿
-
-# 输出 / 评分
-TOP_MARKET = 20
-TOP_PER_INDUSTRY = 1
-MIN_LEADER_SCORE = 65.0
-
+# ── 默认参数（YAML 缺失时的回退值）─────────────
+DEFAULT_PARAMS: dict = {
+    # 硬过滤
+    "min_position": 0.85,
+    "min_ret_20d": 8.0,
+    "max_ret_20d": 70.0,
+    "max_ret_5d": 25.0,
+    "min_rs_20d": 3.0,
+    "min_vol_ratio": 1.2,
+    "min_pct_chg": 1.0,
+    "max_pct_chg": 9.5,
+    "min_amount": 2e8,
+    # 输出 / 评分
+    "top_market": 20,
+    "top_per_industry": 1,
+    "min_leader_score": 65.0,
+}
 
 def _period_return(close: pd.Series, n: int) -> float | None:
     if len(close) <= n:
@@ -45,8 +47,15 @@ def _period_return(close: pd.Series, n: int) -> float | None:
     return round((close.iloc[-1] / base - 1) * 100, 2)
 
 
-def evaluate_leader(df: pd.DataFrame, bench_ret_20d: float, bench_ret_5d: float) -> dict[str, Any]:
+def evaluate_leader(
+    df: pd.DataFrame,
+    bench_ret_20d: float,
+    bench_ret_5d: float,
+    params: dict | None = None,
+) -> dict[str, Any]:
     """计算单只股票龙头指标与得分"""
+    p = merge_params(params, DEFAULT_PARAMS)
+
     if len(df) < 60:
         return {"signal": False, "reason": "数据不足"}
 
@@ -55,14 +64,14 @@ def evaluate_leader(df: pd.DataFrame, bench_ret_20d: float, bench_ret_5d: float)
     today = df.iloc[-1]
 
     # 涨停 / 一字板：无法买入
-    if today["pctChg"] >= MAX_PCT_CHG:
+    if today["pctChg"] >= p["max_pct_chg"]:
         return {"signal": False, "reason": "涨停或追高"}
     if today["high"] == today["low"]:
         return {"signal": False, "reason": "一字板"}
 
     # 流动性
     today_amount = float(today["amount"]) if pd.notna(today.get("amount")) else 0.0
-    if today_amount < MIN_AMOUNT:
+    if today_amount < p["min_amount"]:
         return {"signal": False, "reason": "成交额不足"}
 
     ma20 = close.rolling(20).mean().iloc[-1]
@@ -85,33 +94,27 @@ def evaluate_leader(df: pd.DataFrame, bench_ret_20d: float, bench_ret_5d: float)
     vol_ratio = round(vol_ma5 / vol_ma20, 2) if vol_ma20 > 0 else 0
 
     trend_ok = price > ma20 > ma60
-    strong_pos = position >= MIN_POSITION
-    momentum_ok = MIN_RET_20D <= ret_20d <= MAX_RET_20D and 0 < ret_5d <= MAX_RET_5D
-    rs_ok = rs_20d >= MIN_RS_20D
-    vol_ok = vol_ratio >= MIN_VOL_RATIO
-    today_strong = today["pctChg"] >= MIN_PCT_CHG
+    strong_pos = position >= p["min_position"]
+    momentum_ok = p["min_ret_20d"] <= ret_20d <= p["max_ret_20d"] and 0 < ret_5d <= p["max_ret_5d"]
+    rs_ok = rs_20d >= p["min_rs_20d"]
+    vol_ok = vol_ratio >= p["min_vol_ratio"]
+    today_strong = today["pctChg"] >= p["min_pct_chg"]
 
     hard_ok = all([trend_ok, strong_pos, momentum_ok, rs_ok, vol_ok, today_strong])
 
     # ── 综合分 0-100 ─────────────────────────────
     score = 0.0
-    # 动量（35）：8~50% 之间线性给分，过 50% 不再加分
-    score += min(max(ret_20d - MIN_RET_20D, 0) / (50 - MIN_RET_20D) * 35, 35)
-    # 相对强度（25）：3~20% 超额线性
-    score += min(max(rs_20d - MIN_RS_20D, 0) / (20 - MIN_RS_20D) * 25, 25)
-    # 位置（15）：0.85~1.0 线性
-    score += min(max(position - MIN_POSITION, 0) / (1.0 - MIN_POSITION) * 15, 15)
-    # 量能（15）：1.2~3.0 线性
-    score += min(max(vol_ratio - MIN_VOL_RATIO, 0) / (3.0 - MIN_VOL_RATIO) * 15, 15)
-    # 趋势（10）
+    score += min(max(ret_20d - p["min_ret_20d"], 0) / (50 - p["min_ret_20d"]) * 35, 35)
+    score += min(max(rs_20d - p["min_rs_20d"], 0) / (20 - p["min_rs_20d"]) * 25, 25)
+    score += min(max(position - p["min_position"], 0) / (1.0 - p["min_position"]) * 15, 15)
+    score += min(max(vol_ratio - p["min_vol_ratio"], 0) / (3.0 - p["min_vol_ratio"]) * 15, 15)
     score += 10 if trend_ok else 0
-    # 过热惩罚：ret_20d 超过 60% 之后每超 1% 扣 0.5 分（封顶扣 10 分）
     if ret_20d > 60:
         score -= min((ret_20d - 60) * 0.5, 10)
     leader_score = round(max(min(score, 100), 0), 1)
 
     return {
-        "signal": hard_ok and leader_score >= MIN_LEADER_SCORE,
+        "signal": hard_ok and leader_score >= p["min_leader_score"],
         "leader_score": leader_score,
         "position": round(position, 3),
         "ret_5d": ret_5d,
@@ -139,8 +142,10 @@ def _benchmark_returns() -> tuple[float, float]:
     return r5, r20
 
 
-def _assign_leader_types(rows: list[dict]) -> list[dict]:
+def _assign_leader_types(rows: list[dict], params: dict | None = None) -> list[dict]:
     """标注板块龙一 + 市场龙头"""
+    p = merge_params(params, DEFAULT_PARAMS)
+
     if not rows:
         return []
 
@@ -154,10 +159,10 @@ def _assign_leader_types(rows: list[dict]) -> list[dict]:
     sector_codes: set[str] = set()
     for group in by_industry.values():
         group.sort(key=lambda x: x["leader_score"], reverse=True)
-        for r in group[:TOP_PER_INDUSTRY]:
+        for r in group[:p["top_per_industry"]]:
             sector_codes.add(r["代码"])
 
-    market_codes = {r["代码"] for r in rows[:TOP_MARKET]}
+    market_codes = {r["代码"] for r in rows[:p["top_market"]]}
 
     result = []
     for r in rows:
@@ -176,8 +181,10 @@ def _assign_leader_types(rows: list[dict]) -> list[dict]:
 def scan_stocks(
     stock_list: list[tuple[str, str]],
     mktcap_map: dict[str, float] | None = None,
+    params: dict | None = None,
 ) -> pd.DataFrame:
     """扫描股票池，返回龙头列表"""
+    p = merge_params(params, DEFAULT_PARAMS)
     mktcap_map = mktcap_map or {}
     bench_5d, bench_20d = _benchmark_returns()
     print(f"基准沪深300: 5日 {bench_5d:+.2f}% | 20日 {bench_20d:+.2f}%")
@@ -194,7 +201,7 @@ def scan_stocks(
             df = get_stock_data(code, days=300)
             if df.empty:
                 continue
-            m = evaluate_leader(df, bench_20d, bench_5d)
+            m = evaluate_leader(df, bench_20d, bench_5d, params=params)
             if not m.get("signal"):
                 continue
             candidates.append({
@@ -213,14 +220,13 @@ def scan_stocks(
                 "turn": m.get("turn"),
                 "mktcap": mktcap_map.get(code),
             })
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"\n⚠️ {code} {name}: {e}", file=sys.stderr)
 
     print("\n扫描完成，正在评定龙头...")
-    # 改名 industry → 中文列对齐
     for r in candidates:
         r["industry"] = r["行业"]
-    tagged = _assign_leader_types(candidates)
+    tagged = _assign_leader_types(candidates, params=params)
     if not tagged:
         return pd.DataFrame()
 
@@ -236,16 +242,10 @@ def scan_stocks(
 
 
 if __name__ == "__main__":
-    import baostock as bs
-
-    bs.login()
-    try:
-        test = [
-            ("sh.600519", "贵州茅台"),
-            ("sz.300750", "宁德时代"),
-            ("sh.601318", "中国平安"),
-        ]
-        out = scan_stocks(test)
-        print(out.to_string(index=False) if not out.empty else "测试样本无龙头信号")
-    finally:
-        bs.logout()
+    test = [
+        ("sh.600519", "贵州茅台"),
+        ("sz.300750", "宁德时代"),
+        ("sh.601318", "中国平安"),
+    ]
+    out = scan_stocks(test)
+    print(out.to_string(index=False) if not out.empty else "测试样本无龙头信号")
