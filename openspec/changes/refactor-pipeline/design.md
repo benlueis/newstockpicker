@@ -80,3 +80,35 @@ def backtest(check_fn, stock_list, start_date, end_date, params=None, horizons=[
 - **回测耗时**: 离线任务，利用缓存加速，非本次重点优化
 - **向后兼容**: 保留所有现有脚本文件作为入口点，只改内部实现
 - **不引入新依赖**: 回测用纯 pandas，不引入 `empyrical`
+
+## Implementation Notes (2026-05-28)
+
+全部改动已实施并部署。以下为实际完成情况与设计差异：
+
+### 已完成
+- ✅ 4 策略参数化（DEFAULT_PARAMS + merge_params）
+- ✅ scan_runner.py 通用扫描执行器
+- ✅ backtest/engine.py 回测引擎（T+N 已修正为交易日偏移）
+- ✅ afternoon.py 去重（移除内联函数）
+- ✅ 跨导入修复（strategies/scan_all.py）
+- ✅ tracker.py argparse 参数化
+- ✅ 管道错误恢复（except → stderr）
+- ✅ 午后缓存并行化 + 盘中分钟线实时数据
+- ✅ 尾盘扫描覆盖全部 4 策略（breakout + pullback_ma5 + dragon_leader + sideways_breakout）
+
+### 超出原设计范围
+- 数据源 baostock → 腾讯（tencent）默认，baostock 懒加载
+- 参数 key 统一 lower_case（全项目）
+- DRY：_merge_params 提取到 common.py
+- 安全：Dockerfile 非 root、notify.py urllib→requests
+- 策略改进：横盘突破箱体 1.12→1.08 + 突破回踩确认
+- 龙头策略：20 日回撤约束 + 基准回退警告 + 行业缓存 90 天
+- 命名冲突修复：删除 strategies/scan_dragon.py（循环导入）
+- 缺失依赖补全（pyyaml、pytdx）、未使用依赖清理
+- CI：pytest + flake8 + pullback_ma5
+- 推送来源标记 [GitHub Action]/[本地]
+
+### 测试
+- 35/35 单元测试全部通过
+- 盘中 14:30 全策略扫描：龙头 15 只、横盘 1 只
+- 盘后 16:00 全策略扫描：龙头 15 只、横盘 0 只（收紧后）
