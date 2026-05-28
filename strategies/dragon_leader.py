@@ -32,6 +32,8 @@ DEFAULT_PARAMS: dict = {
     "min_pct_chg": 1.0,
     "max_pct_chg": 9.5,
     "min_amount": 2e8,
+    # 软约束
+    "max_drawdown_20d": -20.0,   # 近20日最大回撤不超过-20%
     # 输出 / 评分
     "top_market": 20,
     "top_per_industry": 1,
@@ -100,6 +102,12 @@ def evaluate_leader(
     vol_ok = vol_ratio >= p["min_vol_ratio"]
     today_strong = today["pctChg"] >= p["min_pct_chg"]
 
+    # 软约束：近20日最大回撤
+    close_20d = close.iloc[-20:]
+    rolling_peak = close_20d.cummax()
+    drawdown_20d = ((close_20d / rolling_peak - 1) * 100).min()
+    drawdown_ok = drawdown_20d >= p["max_drawdown_20d"]
+
     hard_ok = all([trend_ok, strong_pos, momentum_ok, rs_ok, vol_ok, today_strong])
 
     # ── 综合分 0-100 ─────────────────────────────
@@ -130,12 +138,13 @@ def evaluate_leader(
         "momentum_ok": momentum_ok,
         "rs_ok": rs_ok,
         "vol_ok": vol_ok,
+        "drawdown_ok": drawdown_ok,
     }
-
 
 def _benchmark_returns() -> tuple[float, float]:
     idx = get_index_data(days=120)
     if len(idx) < 25:
+        print("[dragon] ⚠️ 基准数据不足，使用 0.0 作为回退", file=sys.stderr)
         return 0.0, 0.0
     r5 = _period_return(idx["close"], 5) or 0.0
     r20 = _period_return(idx["close"], 20) or 0.0

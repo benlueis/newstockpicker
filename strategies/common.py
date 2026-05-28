@@ -69,13 +69,13 @@ def load_industry_map(cache_path: Path | None = None) -> dict[str, str]:
     """
     股票 -> 行业名称（从本地缓存读取）。
 
-    缓存有效期 30 天。缓存不存在时返回空字典。
+    缓存有效期 90 天。缓存不存在时返回空字典。
     """
     cache_path = cache_path or ROOT / "data" / "industry_map.csv"
     if cache_path.exists():
         try:
             age_days = (datetime.now().timestamp() - cache_path.stat().st_mtime) / 86400
-            if age_days < 30:
+            if age_days < 90:
                 df = pd.read_csv(cache_path, dtype=str)
                 return dict(zip(df["code"], df["industry"]))
             else:
